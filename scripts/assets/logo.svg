@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1e1b4b"/>
+      <stop offset="100%" stop-color="#0d0f1e"/>
+    </radialGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="scissorGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c4b5fd"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect width="512" height="512" rx="96" ry="96" fill="url(#bgGrad)"/>
+
+  <!-- Subtle inner border -->
+  <rect x="1.5" y="1.5" width="509" height="509" rx="95" ry="95" fill="none" stroke="rgba(167,139,250,0.18)" stroke-width="3"/>
+
+  <!-- Glow halo behind center -->
+  <circle cx="256" cy="256" r="140" fill="rgba(124,92,255,0.07)"/>
+
+  <!-- SCISSORS BODY -->
+  <!-- Scissor blade top-left going to bottom-right pivot -->
+  <!-- Pivot ring -->
+  <circle cx="256" cy="256" r="22" fill="url(#accentGrad)" filter="url(#glow)"/>
+  <circle cx="256" cy="256" r="13" fill="#0d0f1e"/>
+  <circle cx="256" cy="256" r="6" fill="url(#accentGrad)"/>
+
+  <!-- Blade 1: top-left arm -->
+  <g filter="url(#glow)">
+    <path d="M256 248 L152 148" stroke="url(#scissorGrad)" stroke-width="20" stroke-linecap="round" fill="none" opacity="0.95"/>
+    <!-- Handle ring 1 -->
+    <circle cx="136" cy="134" r="38" fill="none" stroke="url(#scissorGrad)" stroke-width="20" opacity="0.95"/>
+  </g>
+
+  <!-- Blade 2: bottom-left arm -->
+  <g filter="url(#glow)">
+    <path d="M256 264 L152 364" stroke="url(#scissorGrad)" stroke-width="20" stroke-linecap="round" fill="none" opacity="0.95"/>
+    <!-- Handle ring 2 -->
+    <circle cx="136" cy="378" r="38" fill="none" stroke="url(#scissorGrad)" stroke-width="20" opacity="0.95"/>
+  </g>
+
+  <!-- Blade cutting arm going right (open blade) -->
+  <g filter="url(#glow)" opacity="0.7">
+    <path d="M256 248 L390 200" stroke="url(#scissorGrad)" stroke-width="20" stroke-linecap="round" fill="none"/>
+    <path d="M256 264 L390 312" stroke="url(#scissorGrad)" stroke-width="20" stroke-linecap="round" fill="none"/>
+  </g>
+
+  <!-- Record dot (REC indicator) top-right -->
+  <circle cx="380" cy="150" r="22" fill="#ef4444" opacity="0.9" filter="url(#softGlow)"/>
+  <circle cx="380" cy="150" r="13" fill="#fca5a5" opacity="0.95"/>
+
+  <!-- REC label -->
+  <text x="380" y="200" text-anchor="middle" font-family="'Segoe UI', system-ui, sans-serif" font-size="22" font-weight="800" fill="#c4b5fd" opacity="0.85" letter-spacing="2">REC</text>
+
+  <!-- Film strip bars on the right blades edge (subtle detail) -->
+  <rect x="358" y="193" width="30" height="6" rx="3" fill="rgba(196,181,253,0.35)"/>
+  <rect x="368" y="206" width="20" height="6" rx="3" fill="rgba(196,181,253,0.25)"/>
+  <rect x="358" y="306" width="30" height="6" rx="3" fill="rgba(196,181,253,0.35)"/>
+  <rect x="368" y="319" width="20" height="6" rx="3" fill="rgba(196,181,253,0.25)"/>
+</svg>

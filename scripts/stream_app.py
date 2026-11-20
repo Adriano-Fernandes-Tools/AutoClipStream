@@ -958,6 +958,21 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                 self._send_bytes(HTTPStatus.OK, html_bytes, "text/html; charset=utf-8")
                 return
 
+            if path.startswith("/assets/"):
+                asset_name = path[len("/assets/"):]
+                asset_path = SCRIPTS_DIR / "assets" / asset_name
+                if asset_path.exists() and asset_path.is_file():
+                    _ext = asset_path.suffix.lower()
+                    _mime = {
+                        ".svg": "image/svg+xml",
+                        ".ico": "image/x-icon",
+                        ".png": "image/png",
+                    }.get(_ext, "application/octet-stream")
+                    self._send_bytes(HTTPStatus.OK, asset_path.read_bytes(), _mime)
+                else:
+                    self._send_bytes(HTTPStatus.NOT_FOUND, b"asset not found", "text/plain")
+                return
+
             if path == "/api/state":
                 self._send_json(HTTPStatus.OK, build_state_payload())
                 return
