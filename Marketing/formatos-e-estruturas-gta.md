@@ -2,7 +2,7 @@
 
 No estudo de **550 Shorts**, o formato `clipe` solto teve mediana de **`0,90×`** e só apareceu em **3% dos destaques (`≥ 2×`)**, enquanto formatos com narrativa ou tese clara dominaram (**Lista `1,15×`**, **Dica `1,24×`**, **Opinião `1,32×`**, **Diário/Relato `1,35×`**, **Curiosidade em pergunta `1,94×`**, **Teste ao vivo `1,67×`**).
 
-Para transformar momentos das lives de **GTA 6** (`Alanzoka`, `Bistecone`, `DaviJones`, `MrFall`) em cortes de alto desempenho no `@helixgamess`, cada trecho selecionado deve ser embalado em **um dos 6 formatos vencedores abaixo**.
+Para transformar momentos das lives de **GTA 6** (`Alanzoka`, `Bistecone`, `DaviJones`, `MrFall`) em cortes de alto desempenho , cada trecho selecionado deve ser embalado em **um dos 6 formatos vencedores abaixo**.
 
 ---
 
@@ -18,7 +18,7 @@ Para transformar momentos das lives de **GTA 6** (`Alanzoka`, `Bistecone`, `Davi
 | **F6** | **Comparação / Versus** (*Expectativa × Realidade* ou *Streamer × Streamer*) | Split/Comparação (**`1,54×`**, 2/2 canais) + Pergunta de escolha (**`1,16×`**) | **25s – 60s** | `01` ou `03` **Split 38%/62%** | **Estilo 01 (Solta)** ou **Estilo 03 (Caixa Branca)** | Comparação direta (GTA 5 vs GTA 6, Jason vs Lucia, jeito certo vs errado, ou dois streamers na mesma cena). |
 
 > [!IMPORTANT]
-> **Regra de Duração e Silêncios:** A janela oficial do `@helixgamess` é de **10s no mínimo** até **1:30 (90s) no máximo**, mirando sempre o **menor tempo possível (`20s–60s`)** sem sacrificar o contexto. **Nunca corte silêncios automaticamente**, pois pausas de suspense antes de uma batida, tiro ou bug carregam o ritmo da cena.
+> **Regra de Duração e Silêncios:** A janela oficial é de **10s no mínimo** até **1:30 (90s) no máximo**, mirando sempre o **menor tempo possível (`20s–60s`)** sem sacrificar o contexto. **Nunca corte silêncios automaticamente**, pois pausas de suspense antes de uma batida, tiro ou bug carregam o ritmo da cena.
 
 ---
 
