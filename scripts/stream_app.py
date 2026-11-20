@@ -639,7 +639,7 @@ class AutoClipWatcher:
                         ch_paths = ensure_channel_structure(ch_name)
                         dir_fila = ch_paths["02_para_processar"]
                         pre_dir = dir_fila / PRE_TRANSCRICOES_DIRNAME
-                        if not dir_fila.exists() or not pre_dir.exists():
+                        if not dir_fila.exists():
                             continue
 
                         for mkv_path in sorted(dir_fila.iterdir()):
@@ -649,24 +649,32 @@ class AutoClipWatcher:
                                 continue
 
                             transcript_json = _resolve_transcript_json(mkv_path, pre_dir)
-                            # Se modo de transcrição for automático, aguarda o Whisper concluir antes de analisar
+                            # Se modo de transcrição for automático, aguarda o Whisper concluir antes de analisar.
+                            # Regra: se não há transcrição ainda, só avança se o JOB_MGR não estiver rodando
+                            # (i.e., Whisper terminou ou nunca foi disparado) E o arquivo já é antigo o suficiente.
                             modo_tr = str(padroes.get("modo_transcricao", "automatico")).lower()
                             if modo_tr == "automatico" and transcript_json is None:
+                                # Se há um job rodando (Whisper provavelmente), aguarda sem timeout
+                                if JOB_MGR.snapshot()["running"]:
+                                    continue
+                                # Sem job rodando: aguarda pelo menos 60s após o arquivo parar de ser escrito
+                                # para garantir que o gravador fechou o segmento antes de analisar
                                 try:
                                     age = time.time() - mkv_path.stat().st_mtime
                                 except OSError:
                                     age = 0
-                                if age < 180:
+                                if age < 60:
                                     continue
 
                             marker_file = ch_paths["root"] / "marcadores_automaticos" / f"{mkv_path.stem}.json"
-                            # Se o bloco tem transcrição salva mas o marcador_file foi gerado antes da transcrição existir
-                            # (sem texto/sem momentos), permite reanalisar com a transcrição completa.
+                            # Reanalize if: transcript is now available but the previous analysis was audio-only
+                            # (text_score == 0 means Whisper hadn't run yet when the marker was written).
                             should_reanalyze = False
                             if marker_file.exists():
                                 try:
                                     old_m = json.loads(marker_file.read_text(encoding="utf-8"))
-                                    if transcript_json is not None and not old_m.get("momentos") and old_m.get("text_score", 0) == 0:
+                                    was_audio_only = old_m.get("text_score", 0) == 0 and old_m.get("ai_score") is None
+                                    if transcript_json is not None and was_audio_only:
                                         should_reanalyze = True
                                 except Exception:
                                     pass
@@ -732,7 +740,11 @@ class AutoClipWatcher:
                                         cortes_feitos += 1
 
                                     deletar_bloco = bool(padroes.get("deletar_bloco_apos_clip", DEFAULT_DELETE_BLOCK_AFTER_CLIP))
-                                    if deletar_bloco and cortes_feitos > 0:
+                                    # Only delete the source block if the clip was made WITH transcript context.
+                                    # Without a transcript the auto-clip result is audio-only and may be poor quality;
+                                    # keeping the file allows a re-analysis once Whisper finishes.
+                                    had_transcript = transcript_json is not None
+                                    if deletar_bloco and cortes_feitos > 0 and had_transcript:
                                         try:
                                             mkv_path.unlink(missing_ok=True)
                                             append_log("AUTO-CLIP", f"Bloco da fila (02_para_processar) removido para economizar espaço: {mkv_path.name}")
