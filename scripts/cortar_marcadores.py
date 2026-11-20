@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import subprocess
 import unicodedata
 from pathlib import Path
 import sys
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Ensure script directory is available in module search path
 _SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -127,7 +130,7 @@ def _cortar_trecho(
             return
         if encoder == "nvenc":
             raise RuntimeError(f"Falha no h264_nvenc: {res.stderr.strip()}")
-        print(f"  [AVISO] h264_nvenc indisponível ({res.stderr.strip()[:120]}). Usando libx264...")
+        logger.warning("h264_nvenc indisponível (%s). Usando libx264...", res.stderr.strip()[:120])
 
     res_x264 = _run_encode("x264")
     if res_x264.returncode != 0:

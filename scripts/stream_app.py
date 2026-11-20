@@ -19,9 +19,11 @@ import atexit
 import collections
 import errno
 import json
+import logging
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -45,6 +47,7 @@ from config import (
     DEFAULT_ANALYSIS_MODE,
     DEFAULT_AI_BACKEND,
     DEFAULT_AUTO_CLIP_SCORE,
+    DEFAULT_DELETE_BLOCK_AFTER_CLIP,
     DEFAULT_QUALITY,
     DEFAULT_RECONNECT_SECONDS,
     DEFAULT_SEGMENT_MINUTES,
@@ -80,6 +83,20 @@ def append_log(source: str, text: str) -> None:
     ts = datetime.now().strftime("%H:%M:%S")
     with LOGS_LOCK:
         LOGS_BUFFER.append({"ts": ts, "source": str(source), "text": str(text)})
+
+
+class _AppLogHandler(logging.Handler):
+    """Redireciona logs do módulo logging para o buffer de logs do servidor."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        source = record.name.split(".")[-1].upper()
+        append_log(source, self.format(record))
+
+
+_app_log_handler = _AppLogHandler()
+_app_log_handler.setFormatter(logging.Formatter("%(message)s"))
+logging.getLogger("cortar_marcadores").addHandler(_app_log_handler)
+logging.getLogger("cortar_marcadores").setLevel(logging.WARNING)
 
 
 def get_logs(limit: int = 120) -> list[dict[str, str]]:
@@ -550,11 +567,23 @@ class AutoClipWatcher:
                                 continue
 
                             transcript_json = pre_dir / f"{mkv_path.stem}.json"
+                            # Transcricao e opcional: analisa mesmo sem ela (audio-only)
                             if not transcript_json.exists():
-                                continue
+                                transcript_json = None  # type: ignore[assignment]
 
                             marker_file = ch_paths["root"] / "marcadores_automaticos" / f"{mkv_path.stem}.json"
-                            if marker_file.exists() or str(mkv_path) in self._processed:
+                            # Se o bloco tem transcrição salva mas o marcador_file foi gerado antes da transcrição existir
+                            # (sem texto/sem momentos), permite reanalisar com a transcrição completa.
+                            should_reanalyze = False
+                            if marker_file.exists():
+                                try:
+                                    old_m = json.loads(marker_file.read_text(encoding="utf-8"))
+                                    if transcript_json is not None and not old_m.get("momentos") and old_m.get("text_score", 0) == 0:
+                                        should_reanalyze = True
+                                except Exception:
+                                    pass
+
+                            if (marker_file.exists() and not should_reanalyze) or str(mkv_path) in self._processed:
                                 continue
 
                             self._processed.add(str(mkv_path))
@@ -566,7 +595,10 @@ class AutoClipWatcher:
                             momentos = analysis.get("momentos", [])
                             append_log("AUTO-CLIP", f"[{ch_name}] Score: {score:.0f}/100 | Momentos: {len(momentos)}")
 
-                            if score >= min_score and momentos:
+                            # Extrai clips se ha momentos detectados, independente do score global.
+                            # O score global e um indicador; os picos individuais ja foram filtrados em auto_clip.py.
+                            best_m_score = max((float(m.get("score", 0)) for m in momentos), default=0.0)
+                            if momentos and best_m_score >= min_score / 2:
                                 if custom_output:
                                     out_base = Path(custom_output) / ch_name / "clips_automaticos"
                                 else:
@@ -575,7 +607,9 @@ class AutoClipWatcher:
 
                                 try:
                                     dur_video = float(probe_video(mkv_path)["duration"])
-                                    for idx, m in enumerate(momentos[:3], start=1):
+                                    cortes_feitos = 0
+                                    top_momentos = sorted(momentos, key=lambda x: float(x.get("score", 0)), reverse=True)[:3]
+                                    for idx, m in enumerate(top_momentos, start=1):
                                         center = float(m.get("segundo", 0))
                                         inicio = max(0.0, center - 12.0)
                                         dur_corte = min(dur_video - inicio, 30.0)
@@ -588,13 +622,23 @@ class AutoClipWatcher:
 
                                         # Salva legenda sincronizada .srt para o clipe
                                         try:
-                                            raw_tr = json.loads(transcript_json.read_text(encoding="utf-8"))
-                                            segs = raw_tr if isinstance(raw_tr, list) else raw_tr.get("segments", [])
-                                            gerar_srt_trecho(segs, inicio, dur_corte, clip_file.with_suffix(".srt"))
+                                            if transcript_json is not None and Path(transcript_json).exists():
+                                                raw_tr = json.loads(Path(transcript_json).read_text(encoding="utf-8"))
+                                                segs = raw_tr if isinstance(raw_tr, list) else raw_tr.get("segments", [])
+                                                gerar_srt_trecho(segs, inicio, dur_corte, clip_file.with_suffix(".srt"))
                                         except Exception:
                                             pass
 
                                         append_log("AUTO-CLIP", f"★ Clip e legenda (.srt) extraídos ({format_mmss(inicio)} -> {format_mmss(inicio+dur_corte)}): {clip_file.name}")
+                                        cortes_feitos += 1
+
+                                    deletar_bloco = bool(padroes.get("deletar_bloco_apos_clip", DEFAULT_DELETE_BLOCK_AFTER_CLIP))
+                                    if deletar_bloco and cortes_feitos > 0:
+                                        try:
+                                            mkv_path.unlink(missing_ok=True)
+                                            append_log("AUTO-CLIP", f"Bloco da fila (02_para_processar) removido para economizar espaço: {mkv_path.name}")
+                                        except Exception as del_err:
+                                            append_log("AUTO-CLIP", f"Aviso ao remover bloco da fila: {del_err}")
                                 except Exception as exc:
                                     append_log("AUTO-CLIP", f"Aviso ao cortar clip: {exc}")
 
@@ -645,6 +689,19 @@ def _scan_channel_lotes(channel_dir: Path) -> tuple[list[dict[str, Any]], list[d
             )
 
     return lotes_proc, lotes_edicao
+
+
+def _get_local_ip() -> str:
+    """Retorna o IP da maquina na rede local para facilitar acesso remoto."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.2)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
 
 def build_state_payload() -> dict[str, Any]:
@@ -736,6 +793,7 @@ def build_state_payload() -> dict[str, Any]:
             "ai_modelo": padroes.get("ai_modelo", "gemma3:4b"),
             "ai_local_url": padroes.get("ai_local_url", "http://localhost:11434"),
             "auto_clip_min_score": int(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE)),
+            "deletar_bloco_apos_clip": bool(padroes.get("deletar_bloco_apos_clip", DEFAULT_DELETE_BLOCK_AFTER_CLIP)),
             "diretorio_canais": padroes.get("diretorio_canais", ""),
             "output_dir": padroes.get("output_dir", ""),
             "duracao_bloco_minutos": int(padroes.get("duracao_bloco_minutos", DEFAULT_SEGMENT_MINUTES)),
@@ -746,6 +804,11 @@ def build_state_payload() -> dict[str, Any]:
         "recording_active_count": RECORDER_MGR.active_count(),
         "job": JOB_MGR.snapshot(),
         "logs": get_logs(150),
+        "server_info": {
+            "port": PORT,
+            "url_local": f"http://127.0.0.1:{PORT}",
+            "url_network": f"http://{_get_local_ip()}:{PORT}",
+        },
     }
 
 
@@ -931,6 +994,9 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             if path == "/api/finalize":
                 self._handle_finalize(body)
                 return
+            if path == "/api/lote/auto-analyze":
+                self._handle_lote_auto_analyze(body)
+                return
             if path == "/api/cut":
                 self._handle_cut(body)
                 return
@@ -945,6 +1011,9 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/open-folder":
                 self._handle_open_folder(body)
+                return
+            if path == "/api/open-browser":
+                self._handle_open_browser()
                 return
             if path == "/api/ollama/pull":
                 self._handle_ollama_pull(body)
@@ -1071,6 +1140,10 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             score = int(body["auto_clip_min_score"])
             padroes["auto_clip_min_score"] = max(0, min(100, score))
 
+        if body.get("deletar_bloco_apos_clip") is not None:
+            padroes["deletar_bloco_apos_clip"] = bool(body["deletar_bloco_apos_clip"])
+            append_log("APP", f"Deletar bloco da fila pós-clip: {'Ativado' if padroes['deletar_bloco_apos_clip'] else 'Desativado'}")
+
         # --- Pasta de canais / gravações ---
         if body.get("diretorio_canais") is not None:
             raw_dir = str(body["diretorio_canais"]).strip()
@@ -1194,9 +1267,23 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                     append_log("AUTO-CLIP", f"Pasta 02_para_processar não encontrada em {channel}.")
                     return
 
-                mkv_files = [p for p in sorted(dir_fila.iterdir()) if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS]
+                mkv_files = [p for p in sorted(dir_fila.iterdir()) if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS] if dir_fila.exists() else []
+                is_from_lote = False
                 if not mkv_files:
-                    append_log("AUTO-CLIP", f"Nenhum vídeo em 02_para_processar para {channel}.")
+                    dir_proc = ch_paths["03_em_processamento"]
+                    if dir_proc.exists():
+                        for lote_folder in sorted(dir_proc.iterdir(), reverse=True):
+                            if lote_folder.is_dir():
+                                l_files = [p for p in sorted(lote_folder.iterdir()) if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS]
+                                if l_files:
+                                    mkv_files = l_files
+                                    pre_dir = lote_folder / "transcricoes"
+                                    is_from_lote = True
+                                    append_log("AUTO-CLIP", f"Fila 02_para_processar vazia. Analisando {len(mkv_files)} vídeo(s) do lote '{lote_folder.name}'...")
+                                    break
+
+                if not mkv_files:
+                    append_log("AUTO-CLIP", f"Nenhum vídeo na fila ou em lotes para {channel}.")
                     return
 
                 cortes_total = 0
@@ -1209,16 +1296,21 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                     momentos = analysis.get("momentos", [])
                     append_log("AUTO-CLIP", f"[{channel}] {mkv_path.name}: Score {score:.0f}/100 | {len(momentos)} momentos")
 
-                    if score >= min_score and momentos:
+                    # Extrai clips se ha momentos detectados, independente do score global.
+                    # Ordena por score para pegar os melhores primeiro.
+                    best_m_score = max((float(m.get("score", 0)) for m in momentos), default=0.0)
+                    if momentos and best_m_score >= min_score / 2:
                         if custom_output:
                             out_base = Path(custom_output) / channel / "clips_extraidos"
                         else:
                             out_base = ch_paths["05_cortes_extraidos"] / f"cortes_{mkv_path.stem}"
                         out_base.mkdir(parents=True, exist_ok=True)
 
+                        cortes_bloco = 0
                         try:
                             dur_video = float(probe_video(mkv_path)["duration"])
-                            for idx, m in enumerate(momentos[:4], start=1):
+                            top_momentos = sorted(momentos, key=lambda x: float(x.get("score", 0)), reverse=True)[:4]
+                            for idx, m in enumerate(top_momentos, start=1):
                                 center = float(m.get("segundo", 0))
                                 inicio = max(0.0, center - 12.0)
                                 dur_corte = min(dur_video - inicio, 35.0)
@@ -1239,6 +1331,15 @@ class StreamAppHandler(BaseHTTPRequestHandler):
 
                                 append_log("AUTO-CLIP", f"★ Clip e legenda salvos: {clip_file.name}")
                                 cortes_total += 1
+                                cortes_bloco += 1
+
+                            deletar_bloco = bool(padroes.get("deletar_bloco_apos_clip", DEFAULT_DELETE_BLOCK_AFTER_CLIP))
+                            if deletar_bloco and cortes_bloco > 0 and not is_from_lote:
+                                try:
+                                    mkv_path.unlink(missing_ok=True)
+                                    append_log("AUTO-CLIP", f"Bloco da fila (02_para_processar) removido para economizar espaço: {mkv_path.name}")
+                                except Exception as del_err:
+                                    append_log("AUTO-CLIP", f"Aviso ao remover bloco da fila: {del_err}")
                         except Exception as exc:
                             append_log("AUTO-CLIP", f"Erro ao cortar clip: {exc}")
 
@@ -1326,6 +1427,120 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.CONFLICT, {"error": msg})
             return
         self._send_json(HTTPStatus.OK, {"ok": True, "message": msg})
+
+    def _handle_lote_auto_analyze(self, body: dict[str, Any]) -> None:
+        channel = sanitize_channel_name(str(body.get("channel") or ""))
+        lote = str(body.get("lote") or "").strip()
+        if not channel or not lote:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Informe 'channel' e 'lote'."})
+            return
+
+        paths = ensure_channel_structure(channel)
+        lote_dir = paths["03_em_processamento"] / lote
+        if not lote_dir.exists():
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": f"Lote '{lote}' não encontrado em 03_em_processamento."})
+            return
+
+        def _worker() -> None:
+            try:
+                append_log("LOTE", f"Iniciando análise com IA do lote '{lote}' ({channel})...")
+                from auto_clip import analyze_block
+                from premiere_xml import probe_video
+
+                cfg = load_channels_config()
+                padroes = cfg.get("padroes", {})
+                min_score = float(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE))
+
+                video_files = sorted(
+                    p for p in lote_dir.iterdir()
+                    if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
+                )
+                if not video_files:
+                    append_log("LOTE", f"Nenhum arquivo de vídeo encontrado no lote '{lote}'.")
+                    return
+
+                transcricoes_dir = lote_dir / "transcricoes"
+                manuais = load_manual_markers(channel)
+
+                blocos_decisao: list[dict[str, Any]] = []
+                total_aprovados = 0
+                total_descartados = 0
+
+                for vpath in video_files:
+                    tr_json = transcricoes_dir / f"{vpath.stem}.json"
+                    duracao = 600.0
+                    try:
+                        duracao = float(probe_video(vpath)["duration"])
+                    except Exception:
+                        pass
+
+                    manuais_deste = [m for m in manuais if m.get("bloco_arquivo") == vpath.name or m.get("bloco_stem") == vpath.stem]
+
+                    append_log("LOTE", f"Analisando bloco: {vpath.name}...")
+                    analysis = analyze_block(channel, vpath, tr_json, padroes)
+                    score = int(analysis.get("score", 0))
+                    momentos = analysis.get("momentos", [])
+
+                    marcadores: list[dict[str, Any]] = []
+                    for idx, m in enumerate(momentos, start=1):
+                        center = float(m.get("segundo", 0.0))
+                        in_s = max(0.0, center - 10.0)
+                        out_s = min(duracao, center + 20.0)
+                        desc = str(m.get("descricao") or f"Momento {idx}")
+                        marcadores.append({
+                            "in_seg": in_s,
+                            "out_seg": out_s,
+                            "titulo": desc,
+                            "comentario": f"Score {m.get('score', score)}/100",
+                            "tipo": "destaque",
+                        })
+
+                    for mm in manuais_deste:
+                        m_sec = float(mm.get("segundo", 0.0))
+                        marcadores.append({
+                            "in_seg": max(0.0, m_sec - 5.0),
+                            "out_seg": min(duracao, m_sec + 25.0),
+                            "titulo": f"★ {mm.get('nota') or 'Marcador manual'}",
+                            "comentario": "Marcado ao vivo",
+                            "tipo": "manual",
+                        })
+
+                    eh_aprovado = (score >= min_score) or (len(marcadores) > 0) or bool(manuais_deste)
+                    if eh_aprovado:
+                        total_aprovados += 1
+                        blocos_decisao.append({
+                            "arquivo": vpath.name,
+                            "status": "aprovado",
+                            "marcadores": marcadores,
+                            "cortes_descartados": [],
+                        })
+                    else:
+                        total_descartados += 1
+                        blocos_decisao.append({
+                            "arquivo": vpath.name,
+                            "status": "descartado",
+                            "motivo_descarte": f"Pouca atividade relevante (score {score}/100)",
+                            "marcadores": [],
+                            "cortes_descartados": [],
+                        })
+
+                decisao_payload = {
+                    "resumo_rodada": f"Lote {lote} analisado automaticamente. {total_aprovados} bloco(s) aprovado(s), {total_descartados} descartado(s).",
+                    "estado_atual_live": f"Análise concluída com sucesso.",
+                    "arcos_em_aberto": [],
+                    "blocos": blocos_decisao,
+                }
+                decisao_file = lote_dir / "decisao_lote.json"
+                decisao_file.write_text(json.dumps(decisao_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+                append_log("LOTE", f"decisao_lote.json gerado ({total_aprovados} aprovados, {total_descartados} descartados). Disparando geração de XML do Premiere...")
+
+                args = ["--canal", channel, "--lote", lote]
+                JOB_MGR.start_job("finalizar", channel, "finalizar_lote.py", args)
+            except Exception as exc:
+                append_log("LOTE", f"Erro na auto-análise do lote '{lote}': {exc}")
+
+        threading.Thread(target=_worker, daemon=True, name="auto-lote-analyze").start()
+        self._send_json(HTTPStatus.OK, {"ok": True, "message": f"Análise de IA e geração de XML iniciadas para o lote '{lote}'."})
 
     def _handle_cut(self, body: dict[str, Any]) -> None:
         channel = sanitize_channel_name(str(body.get("channel") or ""))
@@ -1427,6 +1642,18 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             safe_target.mkdir(parents=True, exist_ok=True)
         os.startfile(str(safe_target))
         self._send_json(HTTPStatus.OK, {"ok": True, "path": str(safe_target)})
+
+    def _handle_open_browser(self) -> None:
+        url = f"http://127.0.0.1:{PORT}"
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(url)
+            else:
+                import webbrowser
+                webbrowser.open(url)
+            self._send_json(HTTPStatus.OK, {"ok": True, "url": url})
+        except Exception as exc:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
 
     def _handle_ollama_status(self) -> None:
         cfg = load_channels_config()
@@ -1568,10 +1795,77 @@ class StreamAppHandler(BaseHTTPRequestHandler):
         threading.Thread(target=_stop_async, daemon=True).start()
 
 
+def _wait_for_server(host: str, port: int, timeout: float = 15.0) -> bool:
+    """Aguarda o servidor HTTP ficar disponível na porta antes de abrir o Edge."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return True
+        except (ConnectionRefusedError, OSError):
+            time.sleep(0.25)
+    return False
+
+
+def _launch_edge_and_watch(host: str, port: int) -> None:
+    """Abre o aplicativo em modo Edge --app e pergunta ao usuario quando a janela for fechada pelo 'X'."""
+    _wait_for_server(host, port)
+    edge_paths = [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    ]
+    edge_exe = next((p for p in edge_paths if Path(p).exists()), None)
+    url = f"http://{host}:{port}"
+    if edge_exe:
+        cmd = [edge_exe, f"--app={url}", "--window-size=1240,780"]
+    else:
+        cmd = ["cmd", "/c", "start", url]
+
+    try:
+        proc = subprocess.Popen(cmd)
+        proc.wait()
+    except Exception:
+        return
+
+    srv = SERVER_REF.get("server")
+    if srv is not None:
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            encerrar = messagebox.askyesno(
+                title="AutoClipStream — Janela Fechada",
+                message=(
+                    "Você fechou a janela do AutoClipStream.\n\n"
+                    "Deseja ENCERRAR o servidor e todas as gravações ativas?\n\n"
+                    "• Sim = Encerra gravações com segurança e desliga o servidor.\n"
+                    "• Não = Mantém o servidor rodando em segundo plano.\n\n"
+                    f"Acesse pelo navegador a qualquer momento em:\n{url}"
+                ),
+                default="no",
+            )
+            root.destroy()
+            if encerrar:
+                threading.Thread(
+                    target=lambda: (
+                        AUTO_CLIP.stop(),
+                        AUTO_TRANSCRIBE.stop(),
+                        RECORDER_MGR.stop_all(6.0),
+                        srv.shutdown(),
+                    ),
+                    daemon=True,
+                ).start()
+        except Exception as exc:
+            append_log("APP", f"Erro no diálogo de fechamento: {exc}")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Servidor local do Stream-clipping App.")
     parser.add_argument("--host", default=HOST, help=f"Endereço (padrão: {HOST}).")
     parser.add_argument("--port", type=int, default=PORT, help=f"Porta HTTP (padrão: {PORT}).")
+    parser.add_argument("--open-app", action="store_true", help="Abre no Microsoft Edge e monitora seu fechamento.")
     return parser.parse_args(argv)
 
 
@@ -1586,6 +1880,8 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         if exc.errno == errno.EADDRINUSE or getattr(exc, "winerror", None) == 10048:
             print(f"Stream-clipping App já está rodando em http://{args.host}:{args.port}/")
+            if args.open_app:
+                _launch_edge_and_watch(args.host, args.port)
             return 0
         raise
 
@@ -1595,6 +1891,14 @@ def main(argv: list[str] | None = None) -> int:
     atexit.register(RECORDER_MGR.stop_all, 6.0)
     AUTO_TRANSCRIBE.start()
     AUTO_CLIP.start()
+
+    if args.open_app:
+        threading.Thread(
+            target=_launch_edge_and_watch,
+            args=(args.host, args.port),
+            daemon=True,
+            name="edge-window-watcher",
+        ).start()
 
     def _sig_handler(signum, frame) -> None:
         threading.Thread(

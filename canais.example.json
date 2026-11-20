@@ -11,6 +11,7 @@
     "ai_modelo": "",
     "ai_local_url": "http://localhost:11434",
     "auto_clip_min_score": 65,
+    "deletar_bloco_apos_clip": false,
     "diretorio_canais": "",
     "output_dir": ""
   },
