@@ -23,8 +23,25 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
-CANAIS_DIR = PROJECT_ROOT / "canais"
 CANAIS_CONFIG_FILE = PROJECT_ROOT / "canais.json"
+
+
+def get_canais_dir() -> Path:
+    """Retorna o diretório base de canais configurado em canais.json ou o padrão local."""
+    try:
+        if CANAIS_CONFIG_FILE.exists():
+            data = json.loads(CANAIS_CONFIG_FILE.read_text(encoding="utf-8-sig"))
+            custom = str(data.get("padroes", {}).get("diretorio_canais", "")).strip()
+            if custom:
+                p = Path(custom)
+                p.mkdir(parents=True, exist_ok=True)
+                return p
+    except Exception:
+        pass
+    return PROJECT_ROOT / "canais"
+
+
+CANAIS_DIR = get_canais_dir()
 
 # ==============================================================================
 # BINÁRIOS EXTERNOS
@@ -196,7 +213,7 @@ def sanitize_channel_name(name: str) -> str:
 def ensure_channel_structure(channel_name: str) -> dict[str, Path]:
     """Garante todas as subpastas e arquivos iniciais do canal em canais/<canal>/."""
     safe_name = sanitize_channel_name(channel_name)
-    channel_root = CANAIS_DIR / safe_name
+    channel_root = get_canais_dir() / safe_name
     channel_root.mkdir(parents=True, exist_ok=True)
 
     paths: dict[str, Path] = {
@@ -268,11 +285,12 @@ def format_srt_time(seconds: float) -> str:
 
 def list_channel_names() -> list[str]:
     """Lista os nomes de canais existentes na pasta canais/."""
-    if not CANAIS_DIR.exists():
+    base = get_canais_dir()
+    if not base.exists():
         return []
     return sorted(
         p.name
-        for p in CANAIS_DIR.iterdir()
+        for p in base.iterdir()
         if p.is_dir() and not p.name.startswith(".")
     )
 

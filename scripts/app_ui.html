@@ -835,6 +835,18 @@ details.resumo-box pre {
     </div>
 
     <div class="mode-box">
+      <label class="side-label" style="padding:0;" for="inputDiretorioCanais">Pasta Raiz das Gravações</label>
+      <div style="display:flex;gap:4px;margin-top:2px;">
+        <input id="inputDiretorioCanais" type="text" placeholder="(Padrão: canais/ no projeto)" style="flex:1;height:28px;padding:0 8px;border-radius:6px;border:1px solid var(--hairline-strong);background:var(--bg-input);color:var(--text);font-size:11px;">
+        <button id="btnBrowseDiretorioCanais" class="btn btn-sm" title="Escolher pasta no computador" style="padding:0 8px;font-size:12px;">📁</button>
+      </div>
+      <div style="display:flex;gap:4px;margin-top:4px;">
+        <button id="btnSaveDiretorioCanais" class="btn btn-sm" style="flex:1;font-size:10.5px;padding:4px;">Salvar</button>
+        <button id="btnOpenDiretorioCanais" class="btn btn-ghost btn-sm" style="flex:1;font-size:10.5px;padding:4px;">Abrir</button>
+      </div>
+    </div>
+
+    <div class="mode-box">
       <label class="side-label" style="padding:0;" for="inputOutputDir">Pasta de Saída dos Clipes</label>
       <input id="inputOutputDir" type="text" placeholder="(Padrão: 05_cortes_extraidos)" style="width:100%;height:28px;padding:0 8px;border-radius:6px;border:1px solid var(--hairline-strong);background:var(--bg-input);color:var(--text);font-size:11px;">
       <div style="display:flex;gap:4px;margin-top:4px;">
@@ -1046,6 +1058,11 @@ function renderSidebar() {
   if (ollamaBox) {
     ollamaBox.style.display = aiBackend === 'local' ? 'block' : 'none';
     if (aiBackend === 'local') checkOllamaStatus();
+  }
+
+  const inputDirCanais = document.getElementById('inputDiretorioCanais');
+  if (inputDirCanais && document.activeElement !== inputDirCanais) {
+    inputDirCanais.value = data.padroes?.diretorio_canais || '';
   }
 
   const inputOut = document.getElementById('inputOutputDir');
@@ -1648,11 +1665,13 @@ document.getElementById('btnSaveChannel').onclick = async () => {
 document.getElementById('btnDeleteChannel').onclick = async () => {
   const nome = state.editingOriginalName;
   if (!nome) return;
-  if (!confirm(`Remover "${nome}" de canais.json?\n\nOs vídeos já gravados em canais/${nome}/ NÃO serão apagados.`)) return;
+  if (!confirm(`Remover canal "${nome}"?`)) return;
+  const apagarDisco = confirm(`Deseja também APAGAR todas as pastas e vídeos gravados deste canal no disco permanentemente?\n\n- OK = Excluir e apagar arquivos do disco\n- Cancelar = Apenas remover da lista`);
   try {
-    await api('/api/channels/delete', { method: 'POST', body: JSON.stringify({ channel: nome }) });
+    await api('/api/channels/delete', { method: 'POST', body: JSON.stringify({ channel: nome, delete_files: apagarDisco }) });
     closeChannelModal();
-    showToast(`Canal ${nome} removido do canais.json`);
+    showToast(`Canal ${nome} removido.`);
+    state.selectedChannel = null;
     await refreshState();
   } catch (err) { showToast(err.message); }
 };
@@ -1771,6 +1790,41 @@ document.getElementById('btnInstallOllama').onclick = async () => {
   try {
     await api('/api/ollama/install', { method: 'POST', body: '{}' });
     showToast('Instalação do Ollama iniciada via WinGet...');
+  } catch (err) {
+    showToast(err.message);
+  }
+};
+
+document.getElementById('btnBrowseDiretorioCanais').onclick = async () => {
+  try {
+    showToast('Selecione a pasta na janela que se abriu...');
+    const res = await api('/api/browse/folder');
+    if (res && res.path) {
+      document.getElementById('inputDiretorioCanais').value = res.path;
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ diretorio_canais: res.path }) });
+      showToast(`Pasta de gravações alterada para: ${res.path}`);
+      await refreshState();
+    }
+  } catch (err) {
+    showToast(err.message);
+  }
+};
+
+document.getElementById('btnSaveDiretorioCanais').onclick = async () => {
+  const dir = (document.getElementById('inputDiretorioCanais')?.value || '').trim();
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({ diretorio_canais: dir }) });
+    showToast(dir ? `Pasta de gravações salva: ${dir}` : 'Usando pasta padrão (canais/).');
+    await refreshState();
+  } catch (err) {
+    showToast(err.message);
+  }
+};
+
+document.getElementById('btnOpenDiretorioCanais').onclick = async () => {
+  const dir = (document.getElementById('inputDiretorioCanais')?.value || '').trim();
+  try {
+    await api('/api/open-folder', { method: 'POST', body: JSON.stringify({ path: dir }) });
   } catch (err) {
     showToast(err.message);
   }

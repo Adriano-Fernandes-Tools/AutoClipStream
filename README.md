@@ -11,7 +11,11 @@ AutoClipStream/
 |-- scripts/
 |   |-- config.py              # Configurações globais e resolução de binários
 |   |-- stream_app.py          # Servidor HTTP local e API da interface
-|   |-- auto_clip.py           # Engine multimodal de scoring (áudio, texto e IA)
+|   |-- auto_clip.py           # Engine multimodal de scoring (áudio, texto, visão e IA)
+|   |-- plugins/               # Sistema modular de detectores (OCR, Gemma Vision)
+|   |   |-- base.py            # Classe base e gerenciador de plugins
+|   |   |-- ocr_detector.py    # Detector de texto na tela via Windows Media OCR
+|   |   `-- vision_gemma.py    # Detector visual via Gemma 3 Vision local
 |   |-- gravar_lives.py        # Gravador contínuo multi-canal (Streamlink / yt-dlp)
 |   |-- preparar_lote.py       # Whisper GPU + geração de grades de frames
 |   |-- finalizar_lote.py      # Organização de lotes e gerador de XML Premiere Pro

@@ -247,21 +247,23 @@ def score_ai_api(
 def score_ai_ollama(
     canal: str,
     transcript_text: str,
-    modelo: str,
+    modelo: str = "gemma3:4b",
     ollama_url: str = "http://localhost:11434",
     context: str = "",
-    timeout: int = 60,
+    timeout: int = 90,
 ) -> dict[str, Any]:
-    """Chama Ollama local e retorna {'score': int, 'momentos': [...]}."""
+    """Chama Ollama local via /api/chat e retorna {'score': int, 'momentos': [...], 'success': bool}."""
+    target_model = modelo.strip() if modelo and modelo.strip() else "gemma3:4b"
     prompt = _build_ai_prompt(canal, transcript_text, context)
     payload = json.dumps({
-        "model": modelo or "gemma3:12b",
-        "prompt": prompt,
+        "model": target_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "options": {"num_gpu": 0},
         "stream": False,
     }).encode("utf-8")
 
     req = urllib.request.Request(
-        f"{ollama_url.rstrip('/')}/api/generate",
+        f"{ollama_url.rstrip('/')}/api/chat",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -269,10 +271,12 @@ def score_ai_ollama(
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        content = data.get("response", "")
-        return _parse_ai_response(content)
+        content = data.get("message", {}).get("content", "")
+        parsed = _parse_ai_response(content)
+        parsed["success"] = bool(parsed.get("score", 0) > 0 or parsed.get("momentos"))
+        return parsed
     except Exception as exc:
-        return {"score": 0, "momentos": [], "error": str(exc)}
+        return {"score": None, "momentos": [], "error": str(exc), "success": False}
 
 
 def _parse_ai_response(text: str) -> dict[str, Any]:
@@ -362,11 +366,15 @@ def analyze_block(
             result = score_ai_ollama(
                 canal=canal,
                 transcript_text=transcript_text,
-                modelo=str(config.get("ai_modelo", "gemma3:12b")),
+                modelo=str(config.get("ai_modelo", "gemma3:4b")),
                 ollama_url=str(config.get("ai_local_url", "http://localhost:11434")),
             )
-        ai_score = int(result.get("score", 0))
-        ai_momentos = result.get("momentos", [])
+        if result.get("success") and result.get("score") is not None:
+            ai_score = int(result["score"])
+            ai_momentos = result.get("momentos", [])
+        else:
+            err = result.get("error", "resposta vazia")
+            print(f"[AUTO-CLIP] [AVISO] IA ({ai_backend}) não respondeu ({err}). Usando pontuação áudio/texto.", file=sys.stderr)
 
     # --- Score final ponderado ---
     if ai_score is not None:
@@ -403,6 +411,32 @@ def analyze_block(
             "tipo": "ai",
             "descricao": str(m.get("descricao", "")),
         })
+
+    # --- Plugins (OCR na tela, Gemma Vision, etc) ---
+    try:
+        from plugins import PluginManager
+        pm = PluginManager()
+        frames_list: list[Path] = []
+        stem = video_path.stem
+        for p_dir in (video_path.parent, video_path.parent.parent):
+            f_dir = p_dir / "frames"
+            if f_dir.exists():
+                frames_list = sorted(f_dir.glob(f"*{stem}*.jpg"))
+                if frames_list:
+                    break
+        p_moments = pm.run_all(
+            canal=canal,
+            video_path=video_path,
+            frames=frames_list,
+            transcript_text=transcript_text if "transcript_text" in locals() else "",
+            config=config,
+        )
+        for pm_item in p_moments:
+            momentos.append(pm_item)
+            if pm_item.get("score", 0) > final_score:
+                final_score = round(max(final_score, pm_item["score"] * 0.9), 1)
+    except Exception:
+        pass
 
     # Remove duplicatas próximas (< 10s de distância), mantém maior score
     momentos.sort(key=lambda x: x["segundo"])

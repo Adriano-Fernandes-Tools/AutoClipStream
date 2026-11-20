@@ -3,50 +3,16 @@
     "duracao_bloco_minutos": 10,
     "qualidade": "best",
     "intervalo_reconexao_segundos": 30,
-    "modo_transcricao": "manual",
-    "modo_analise": "blocos",
+    "modo_transcricao": "automatico",
+    "modo_analise": "automatico",
     "ai_backend": "desabilitado",
     "ai_api_url": "",
     "ai_api_key": "",
-    "ai_modelo": "",
+    "ai_modelo": "gemma3:4b",
     "ai_local_url": "http://localhost:11434",
     "auto_clip_min_score": 65,
+    "diretorio_canais": "",
     "output_dir": ""
   },
-  "canais": [
-    {
-      "nome": "Alanzoka",
-      "url": "https://www.twitch.tv/alanzoka",
-      "ativo": true,
-      "motor": "auto",
-      "duracao_bloco_minutos": 10,
-      "qualidade": "best"
-    },
-    {
-      "nome": "MrFall",
-      "url": "https://www.twitch.tv/mrfalll",
-      "ativo": true,
-      "motor": "auto",
-      "duracao_bloco_minutos": 10,
-      "qualidade": "best"
-    },
-    {
-      "nome": "Bistecone",
-      "url": "https://www.youtube.com/watch?v=Ou7tVWye4YM",
-      "ativo": false,
-      "motor": "yt-dlp",
-      "duracao_bloco_minutos": 10,
-      "qualidade": "best",
-      "cookies": ""
-    },
-    {
-      "nome": "DaviJones",
-      "url": "https://www.youtube.com/watch?v=czLjal_UA9Q",
-      "ativo": false,
-      "motor": "auto",
-      "duracao_bloco_minutos": 10,
-      "qualidade": "best",
-      "cookies": ""
-    }
-  ]
+  "canais": []
 }

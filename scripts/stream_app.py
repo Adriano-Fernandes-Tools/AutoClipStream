@@ -56,6 +56,7 @@ from config import (
     VIDEO_EXTENSIONS,
     ensure_channel_structure,
     format_mmss,
+    get_canais_dir,
     get_python_console_exe,
     list_channel_names,
     load_channels_config,
@@ -650,16 +651,13 @@ def build_state_payload() -> dict[str, Any]:
             config_entries[name] = entry
             ordered_names.append(name)
 
-    for disk_name in list_channel_names():
-        if disk_name not in config_entries:
-            ordered_names.append(disk_name)
-
+    base_canais = get_canais_dir()
     canais_out: list[dict[str, Any]] = []
     for name in ordered_names:
         entry = config_entries.get(name)
         in_config = entry is not None
         url = str((entry or {}).get("url") or "").strip()
-        channel_dir = CANAIS_DIR / name
+        channel_dir = base_canais / name
 
         counts = {
             "01_gravando": _count_videos(channel_dir / "01_gravando"),
@@ -718,15 +716,17 @@ def build_state_payload() -> dict[str, Any]:
 
     return {
         "project_root": str(PROJECT_ROOT),
+        "diretorio_canais_efetivo": str(get_canais_dir()),
         "padroes": {
             "modo_transcricao": padroes.get("modo_transcricao", DEFAULT_TRANSCRIPTION_MODE),
             "modo_analise": padroes.get("modo_analise", DEFAULT_ANALYSIS_MODE),
             "ai_backend": padroes.get("ai_backend", DEFAULT_AI_BACKEND),
             "ai_api_url": padroes.get("ai_api_url", ""),
             "ai_api_key": padroes.get("ai_api_key", ""),
-            "ai_modelo": padroes.get("ai_modelo", ""),
+            "ai_modelo": padroes.get("ai_modelo", "gemma3:4b"),
             "ai_local_url": padroes.get("ai_local_url", "http://localhost:11434"),
             "auto_clip_min_score": int(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE)),
+            "diretorio_canais": padroes.get("diretorio_canais", ""),
             "output_dir": padroes.get("output_dir", ""),
             "duracao_bloco_minutos": int(padroes.get("duracao_bloco_minutos", DEFAULT_SEGMENT_MINUTES)),
             "qualidade": padroes.get("qualidade", DEFAULT_QUALITY),
@@ -870,6 +870,10 @@ class StreamAppHandler(BaseHTTPRequestHandler):
 
             if path == "/api/ollama/status":
                 self._handle_ollama_status()
+                return
+
+            if path == "/api/browse/folder":
+                self._handle_browse_folder()
                 return
 
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "Endpoint não encontrado."})
@@ -1048,7 +1052,22 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             score = int(body["auto_clip_min_score"])
             padroes["auto_clip_min_score"] = max(0, min(100, score))
 
-        # --- Pasta de saída ---
+        # --- Pasta de canais / gravações ---
+        if body.get("diretorio_canais") is not None:
+            raw_dir = str(body["diretorio_canais"]).strip()
+            if raw_dir and not Path(raw_dir).exists():
+                try:
+                    Path(raw_dir).mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {"error": f"Não foi possível criar diretorio_canais: {exc}"},
+                    )
+                    return
+            padroes["diretorio_canais"] = raw_dir
+            append_log("APP", f"Diretório de canais configurado: {raw_dir or '(padrão: canais/ no projeto)'}")
+
+        # --- Pasta de saída de cortes ---
         if body.get("output_dir") is not None:
             raw_dir = str(body["output_dir"]).strip()
             if raw_dir and not Path(raw_dir).exists():
@@ -1085,8 +1104,41 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             if isinstance(c, dict) and sanitize_channel_name(str(c.get("nome") or "")) != nome
         ]
         _save_channels_config(cfg)
-        append_log("APP", f"Canal '{nome}' removido de canais.json (pastas preservadas).")
+
+        delete_files = bool(body.get("delete_files") or body.get("delete_folder"))
+        if delete_files:
+            canal_dir = get_canais_dir() / nome
+            if canal_dir.exists():
+                shutil.rmtree(canal_dir, ignore_errors=True)
+                append_log("APP", f"Canal '{nome}' e seus arquivos apagados do disco.")
+            else:
+                append_log("APP", f"Canal '{nome}' removido de canais.json.")
+        else:
+            append_log("APP", f"Canal '{nome}' removido de canais.json (pastas preservadas).")
+
         self._send_json(HTTPStatus.OK, {"ok": True})
+
+    def _handle_browse_folder(self) -> None:
+        result_path = [""]
+
+        def _ask() -> None:
+            try:
+                import tkinter as tk
+                from tkinter import filedialog
+                root = tk.Tk()
+                root.withdraw()
+                root.attributes("-topmost", True)
+                selected = filedialog.askdirectory(title="Selecione a pasta de canais e gravações")
+                root.destroy()
+                if selected:
+                    result_path[0] = str(Path(selected).resolve())
+            except Exception as exc:
+                append_log("APP", f"Erro no seletor de pasta: {exc}")
+
+        t = threading.Thread(target=_ask, daemon=True)
+        t.start()
+        t.join(timeout=60)
+        self._send_json(HTTPStatus.OK, {"path": result_path[0]})
 
     def _handle_record_start(self, body: dict[str, Any]) -> None:
         if body.get("all"):
@@ -1301,6 +1353,43 @@ class StreamAppHandler(BaseHTTPRequestHandler):
 
         def _pull_worker() -> None:
             append_log("OLLAMA", f"Iniciando download do modelo '{model_name}'...")
+            try:
+                payload = json.dumps({"name": model_name, "stream": True}).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{local_url}/api/pull",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=1800) as resp:
+                    last_pct = -1
+                    for raw_line in resp:
+                        if not raw_line:
+                            continue
+                        try:
+                            chunk = json.loads(raw_line.decode("utf-8"))
+                            status = chunk.get("status", "")
+                            total = chunk.get("total", 0)
+                            completed = chunk.get("completed", 0)
+                            if total > 0 and completed > 0:
+                                pct = int((completed / total) * 100)
+                                if pct >= last_pct + 10 or pct == 100:
+                                    last_pct = pct
+                                    bar_len = 10
+                                    filled = int(bar_len * completed / total)
+                                    bar = "█" * filled + "░" * (bar_len - filled)
+                                    mb_done = completed / (1024 * 1024)
+                                    mb_total = total / (1024 * 1024)
+                                    append_log("OLLAMA", f"[{bar}] {pct}% ({mb_done:.0f}MB / {mb_total:.0f}MB) — {status}")
+                            elif status:
+                                append_log("OLLAMA", f"Status: {status}")
+                        except Exception:
+                            pass
+                append_log("OLLAMA", f"Modelo '{model_name}' pronto para uso!")
+                return
+            except Exception as exc:
+                append_log("OLLAMA", f"Tentando download via CLI local ({exc})...")
+
             ollama_bin = shutil.which("ollama") or "ollama"
             try:
                 proc = subprocess.run(
@@ -1312,23 +1401,9 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                     creationflags=SUBPROCESS_FLAGS,
                 )
                 if proc.returncode == 0:
-                    append_log("OLLAMA", f"Modelo '{model_name}' baixado com sucesso!")
-                    return
-            except Exception:
-                pass
-
-            try:
-                payload = json.dumps({"name": model_name, "stream": False}).encode("utf-8")
-                req = urllib.request.Request(
-                    f"{local_url}/api/pull",
-                    data=payload,
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=900) as resp:
-                    if resp.status == 200:
-                        append_log("OLLAMA", f"Modelo '{model_name}' baixado com sucesso via API.")
-                        return
+                    append_log("OLLAMA", f"Modelo '{model_name}' baixado com sucesso via CLI!")
+                else:
+                    append_log("OLLAMA", f"Falha no download via CLI: {proc.stderr[:150]}")
             except Exception as exc:
                 append_log("OLLAMA", f"Erro ao baixar modelo '{model_name}': {exc}")
 
@@ -1337,19 +1412,37 @@ class StreamAppHandler(BaseHTTPRequestHandler):
 
     def _handle_ollama_install(self) -> None:
         def _install_worker() -> None:
-            append_log("OLLAMA", "Instalação do Ollama iniciada via winget...")
+            append_log("OLLAMA", "Instalação silenciosa do Ollama iniciada via winget...")
             try:
-                cmd = ["winget", "install", "Ollama.Ollama", "--accept-source-agreements", "--accept-package-agreements", "--silent"]
-                proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+                cmd = [
+                    "winget", "install", "-e", "--id", "Ollama.Ollama",
+                    "--accept-source-agreements", "--accept-package-agreements",
+                    "--silent", "--disable-interactivity"
+                ]
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=SUBPROCESS_FLAGS,
+                )
+                if proc.stdout:
+                    for line in proc.stdout:
+                        line_str = line.strip()
+                        if line_str and ("%" in line_str or "Baixando" in line_str or "Instalando" in line_str or "Encontrado" in line_str):
+                            append_log("OLLAMA", line_str)
+                proc.wait()
                 if proc.returncode == 0:
-                    append_log("OLLAMA", "Ollama instalado com sucesso! Abra o Ollama para iniciar o serviço.")
+                    append_log("OLLAMA", "Ollama instalado com sucesso! Serviço disponível em http://localhost:11434")
                 else:
-                    append_log("OLLAMA", f"Instalação finalizada: {proc.stdout[:150]}")
+                    append_log("OLLAMA", f"Winget finalizado com código {proc.returncode}")
             except Exception as exc:
                 append_log("OLLAMA", f"Erro no instalador: {exc}")
 
         threading.Thread(target=_install_worker, daemon=True, name="ollama-install").start()
-        self._send_json(HTTPStatus.OK, {"ok": True, "message": "Instalação do Ollama disparada via winget."})
+        self._send_json(HTTPStatus.OK, {"ok": True, "message": "Instalação silenciosa do Ollama disparada via winget."})
 
     def _handle_shutdown(self) -> None:
         self._send_json(HTTPStatus.OK, {"ok": True, "message": "Encerrando servidor..."})
