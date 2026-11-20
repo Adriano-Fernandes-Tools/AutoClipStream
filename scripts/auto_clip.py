@@ -33,6 +33,7 @@ from config import (
     FFMPEG_BIN,
     FFPROBE_BIN,
     IMPACT_KEYWORDS_RE,
+    MARKETING_DIR,
     SUBPROCESS_FLAGS,
     VIDEO_EXTENSIONS,
     ensure_channel_structure,
@@ -195,11 +196,60 @@ def score_transcript_peaks(
 # PONTUAÇÃO POR AI (OPCIONAL)
 # ==============================================================================
 
-def _build_ai_prompt(canal: str, transcript_text: str, context: str = "") -> str:
+def _load_marketing_guidelines(jogo: str | None = None) -> str:
+    """Carrega diretrizes editoriais resumidas de Marketing/<jogo>/ ou Marketing/geral/."""
+    try:
+        tag = (jogo or "geral").strip().lower()
+        if not MARKETING_DIR.exists():
+            return ""
+
+        # Mapeia sinônimos comuns para as pastas reais em Marketing/
+        pasta_alvo = "geral"
+        if "gta" in tag:
+            pasta_alvo = "gta"
+        elif "fortnite" in tag:
+            pasta_alvo = "fortnite"
+
+        target_dir = MARKETING_DIR / pasta_alvo
+        if not target_dir.exists():
+            target_dir = MARKETING_DIR / "geral"
+
+        if not target_dir.exists():
+            return ""
+
+        lines: list[str] = []
+        # Lê arquivos principais de gatilhos ou checklist
+        for doc_name in ("gatilhos-e-hooks-gta.md", "retencao-edicao-e-checklist-gta.md", "README.md", "edicao-e-publicacao.md"):
+            doc_path = target_dir / doc_name
+            if doc_path.exists():
+                text = doc_path.read_text(encoding="utf-8", errors="replace")
+                # Extrai tópicos curtos (linhas com bullet points relevantes)
+                for line in text.splitlines():
+                    clean = line.strip()
+                    if (clean.startswith("- ") or clean.startswith("* ") or clean.startswith("1.") or clean.startswith("2.")) and len(clean) > 8:
+                        if not any(stop in clean.lower() for stop in ("http", "licença", "tabela", "código s0")):
+                            lines.append(clean[:120])
+                    if len(lines) >= 8:
+                        break
+            if len(lines) >= 8:
+                break
+
+        if lines:
+            return "Diretrizes de retenção e ganchos virais (" + pasta_alvo.upper() + "):\n" + "\n".join(lines[:8])
+    except Exception:
+        pass
+    return ""
+
+
+def _build_ai_prompt(canal: str, transcript_text: str, context: str = "", jogo: str | None = None) -> str:
+    guidelines = _load_marketing_guidelines(jogo)
+    guide_section = f"\n{guidelines}\n" if guidelines else ""
     return (
-        f"Você é um editor de vídeo especialista em cortes virais de lives de games no TikTok e Reels.\n"
+        f"Você é um editor de vídeo especialista em cortes virais de lives de games no TikTok, Reels e Shorts.\n"
         f"Canal: {canal}\n"
+        + (f"Jogo/Categoria: {jogo}\n" if jogo else "")
         + (f"Contexto da live: {context}\n" if context else "")
+        + guide_section
         + f"\nTranscrição do bloco de 10 minutos:\n{transcript_text[:3000]}\n\n"
         "Avalie este bloco com um score de 0 a 100 indicando o potencial viral.\n"
         "Depois liste até 3 momentos específicos com timestamp aproximado (em segundos desde o início do bloco).\n"
@@ -215,10 +265,11 @@ def score_ai_api(
     api_key: str,
     modelo: str,
     context: str = "",
+    jogo: str | None = None,
     timeout: int = 30,
 ) -> dict[str, Any]:
     """Chama endpoint OpenAI-compatible e retorna {'score': int, 'momentos': [...]}."""
-    prompt = _build_ai_prompt(canal, transcript_text, context)
+    prompt = _build_ai_prompt(canal, transcript_text, context, jogo=jogo)
     payload = json.dumps({
         "model": modelo or "gpt-4o-mini",
         "messages": [{"role": "user", "content": prompt}],
@@ -251,11 +302,12 @@ def score_ai_ollama(
     modelo: str = "gemma3:4b",
     ollama_url: str = "http://localhost:11434",
     context: str = "",
+    jogo: str | None = None,
     timeout: int = 90,
 ) -> dict[str, Any]:
     """Chama Ollama local via /api/chat e retorna {'score': int, 'momentos': [...], 'success': bool}."""
     target_model = modelo.strip() if modelo and modelo.strip() else "gemma3:4b"
-    prompt = _build_ai_prompt(canal, transcript_text, context)
+    prompt = _build_ai_prompt(canal, transcript_text, context, jogo=jogo)
     payload = json.dumps({
         "model": target_model,
         "messages": [{"role": "user", "content": prompt}],
@@ -304,6 +356,7 @@ def analyze_block(
     video_path: Path,
     transcript_path: Path | None = None,
     config: dict[str, Any] | None = None,
+    jogo: str | None = None,
 ) -> dict[str, Any]:
     """Analisa um bloco e retorna score final + lista de momentos detectados.
 
@@ -362,6 +415,7 @@ def analyze_block(
                 api_url=str(config.get("ai_api_url", "")),
                 api_key=str(config.get("ai_api_key", "")),
                 modelo=str(config.get("ai_modelo", "")),
+                jogo=jogo,
             )
         else:  # local
             result = score_ai_ollama(
@@ -369,6 +423,7 @@ def analyze_block(
                 transcript_text=transcript_text,
                 modelo=str(config.get("ai_modelo", "gemma3:4b")),
                 ollama_url=str(config.get("ai_local_url", "http://localhost:11434")),
+                jogo=jogo,
             )
         if result.get("success") and result.get("score") is not None:
             ai_score = int(result["score"])

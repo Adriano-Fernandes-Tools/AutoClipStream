@@ -471,6 +471,7 @@ def preparar_canal(
     intervalo_frames: int,
     sem_whisper: bool,
     sem_frames: bool,
+    arquivos_alvo: list[str] | None = None,
 ) -> Path | None:
     """Isola os arquivos pendentes de um canal e prepara um novo lote em 03_em_processamento/."""
     paths = ensure_channel_structure(channel_name)
@@ -478,11 +479,19 @@ def preparar_canal(
     dir_entrada = paths["02_para_processar"]
 
     agora = time.time()
-    candidatos = sorted(
-        p
-        for p in dir_entrada.iterdir()
-        if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
-    )
+    if arquivos_alvo:
+        alvo_set = {Path(a).name for a in arquivos_alvo}
+        candidatos = sorted(
+            p
+            for p in dir_entrada.iterdir()
+            if p.is_file() and p.name in alvo_set and p.suffix.lower() in VIDEO_EXTENSIONS
+        )
+    else:
+        candidatos = sorted(
+            p
+            for p in dir_entrada.iterdir()
+            if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
+        )
     prontos = [p for p in candidatos if (agora - p.stat().st_mtime) >= 3.0]
 
     if not prontos:
@@ -688,6 +697,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Pula a extração das grades de frames.",
     )
     parser.add_argument(
+        "--arquivos",
+        nargs="*",
+        metavar="ARQUIVO",
+        help="Nomes de arquivos específicos em 02_para_processar/ para isolar no lote.",
+    )
+    parser.add_argument(
         "--pre-transcrever",
         nargs="*",
         metavar="VIDEO",
@@ -764,6 +779,7 @@ def main(argv: list[str] | None = None) -> int:
             intervalo_frames=max(1, args.intervalo_frames),
             sem_whisper=args.sem_whisper,
             sem_frames=args.sem_frames,
+            arquivos_alvo=args.arquivos,
         )
 
     return 0
