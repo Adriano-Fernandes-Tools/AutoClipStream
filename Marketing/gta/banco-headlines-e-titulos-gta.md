@@ -1,6 +1,8 @@
 # Banco de Headlines (`0–10s`) e Títulos para GTA 6
 
-Em um feed vertical, o espectador decide nos primeiros **1 a 2 segundos** se fica ou desliza. O texto da Headline na tela é lido **antes** mesmo de o ouvido processar a frase do streamer (Canal 1 #33), funcionando como a "capa" do Short.
+> Arquivo histórico. Estes moldes foram escritos para GTA. Confira cada afirmação no clipe antes de aproveitá-la. A origem dos números está na [revisão das fontes](../revisao-das-fontes.md).
+
+Em um feed vertical, o espectador decide nos primeiros **1 a 2 segundos** se fica ou desliza. O texto da Headline na tela é lido **antes** mesmo de o ouvido processar a frase do streamer (L01 #33), funcionando como a "capa" do Short.
 
 ---
 
@@ -11,7 +13,7 @@ Em um feed vertical, o espectador decide nos primeiros **1 a 2 segundos** se fic
 - **Posição:**
   - Nos layouts **Split (38%/62%)**: centralizada na linha de junção entre a webcam e o jogo (`y ≈ 720`).
   - No layout **Streamer Centro + Fundo Blur**: centralizada acima da câmera (`y ≈ 420`).
-- **Regra do 1 Segundo (Canal 1 #25, #26, #61):**
+- **Regra do 1 Segundo (L01 #25, #26, #61):**
   - Escrita simples (**nível de 3ª série**): zero jargão técnico difícil. Quem nunca jogou GTA precisa entender imediatamente o drama ou a piada.
   - **4 a 9 palavras** no máximo, quebradas em **2 ou 3 linhas curtas** fáceis de bater o olho no celular.
   - **Não entregue o final na Headline:** mostre o **Conceito + Pergunta / Conflito / Erro**, nunca o desfecho (*"OLHA NO QUE DEU"* vence *"ELE MORREU PRO JACARÉ"*).
@@ -22,15 +24,15 @@ Em um feed vertical, o espectador decide nos primeiros **1 a 2 segundos** se fic
 
 | Estilo | Aparência | Quando Usar (Gatilho e Clima) | Exemplos Reais no Nosso Padrão |
 | :--- | :--- | :--- | :--- |
-| **01 · Headline Solta** | Texto grande **AMARELO + BRANCO** com contorno preto grosso e sombra (sem caixa atrás) | Opiniões do streamer, perguntas abertas de curiosidade, testes de física/IA, vereditos e comparações. | `OPINIÃO DO ALAN SOBRE GTA 6 ATÉ AGORA!` / `(ESSE JOGO TÁ BIZARRO)`<br>`O QUE ACONTECE SE PROVOCAR ESSE NPC NO GTA 6?` |
-| **02 · Tarja Vermelha** | Texto branco + destaque amarelo dentro de **caixa vermelha com borda preta** | Polêmicas fortes, alertas de erro, perseguições de polícia, bugs críticos, momentos de perda ou tensão extrema. | `NUNCA FAÇA ISSO COM A POLÍCIA NO GTA 6!`<br>`DAVY JONES QUEBROU A MISSÃO EM 10 SEGUNDOS` |
+| **01 · Headline Solta** | Texto grande **AMARELO + BRANCO** com contorno preto grosso e sombra (sem caixa atrás) | Opiniões do streamer, perguntas abertas de curiosidade, testes de física/IA, vereditos e comparações. | `OPINIÃO DO P01 SOBRE GTA 6 ATÉ AGORA!` / `(ESSE JOGO TÁ BIZARRO)`<br>`O QUE ACONTECE SE PROVOCAR ESSE NPC NO GTA 6?` |
+| **02 · Tarja Vermelha** | Texto branco + destaque amarelo dentro de **caixa vermelha com borda preta** | Polêmicas fortes, alertas de erro, perseguições de polícia, bugs críticos, momentos de perda ou tensão extrema. | `NUNCA FAÇA ISSO COM A POLÍCIA NO GTA 6!`<br>`P03 QUEBROU A MISSÃO EM 10 SEGUNDOS` |
 | **03 · Caixa Branca** | Texto preto em **caixa branca arredondada** (estilo meme / comentário) | Humor, ironia, expectativa vs. realidade, diálogos engraçados, bugs leves e situações constrangedoras. | `BUGZINHO DE LEVES NO GTA 6`<br>`"VOU JOGAR SÓ UMA PRA DISTRAIR" / A PRIMEIRA MISSÃO:` |
 
 ---
 
 ## 3. Banco com 64 Moldes Prontos de Headlines para GTA 6
 
-Preencha os colchetes adaptando para o momento específico da live (`ALANZOKA`, `BISTECONE`, `DAVYJONES`, `MRFALL`, `JASON`, `LUCIA`, `VICE CITY`):
+Preencha os colchetes adaptando para o momento específico da live (`P01`, `P02`, `P03`, `P04`, `JASON`, `LUCIA`, `VICE CITY`):
 
 ### Categoria 1 · Pergunta & Teste ao Vivo (`1,94×` em curiosidade · Estilo 01 ou 03)
 1. `O QUE ACONTECE SE [AÇÃO] NO GTA 6?`
@@ -98,7 +100,7 @@ Preencha os colchetes adaptando para o momento específico da live (`ALANZOKA`, 
 55. `COMO DESTRUIR SUA MISSÃO NO GTA 6 EM 5 SEGUNDOS!`
 56. `O ERRO DE INICIANTE QUE CUSTOU CARO PRO [STREAMER]!`
 
-### Categoria 6 · Comparação & Primeira Vez (`1,54×` Split / Canal 1 "Primeira Vez" · Estilo 01 ou 03)
+### Categoria 6 · Comparação & Primeira Vez (`1,54×` Split / L01 "Primeira Vez" · Estilo 01 ou 03)
 57. `1ª VEZ DO [STREAMER] VENDO [X] NO GTA 6!`
 58. `GTA 5 VS GTA 6: OLHA ESSA DIFERENÇA ABSURDA!`
 59. `[STREAMER A] VS [STREAMER B] NA MESMA CENA DO GTA 6!`
@@ -120,10 +122,10 @@ No estudo (`titulos.md` + `ENSINAMENTOS.md`), o hook da tela pesa mais que a leg
 | **Formato de Pergunta (`?`)** | **`1,11×`** (5/8 canais) | Excelente quando o corte testa algo ou pede opinião nos comentários. |
 | **1 ou 2 palavras em CAIXA ALTA** | **`1,03×`** (5/8 canais) | Destaca o ponto principal. ⚠️ **Título TODO em caixa alta cai para `0,95×`** — use caixa normal + 1 destaque! |
 | **Contém o nome do jogo (`GTA 6`)** | **`1,03×`** (5/8 canais) | Ajuda o algoritmo e a busca a indexar imediatamente o assunto. |
-| **Curto (menos de 50 caracteres)** | Canal 1 #32 | Cabe inteiro no celular sem cortar com `...` automático da plataforma. |
+| **Curto (menos de 50 caracteres)** | L01 #32 | Cabe inteiro no celular sem cortar com `...` automático da plataforma. |
 
 > [!TIP]
-> **Complemente, não repita igual:** Se a Headline na tela diz `"OPINIÃO DO ALAN SOBRE GTA 6 ATÉ AGORA!"`, o título do post pode ser algo conversacional e humano como: *"Alanzoka foi MUITO sincero sobre o GTA 6..."* ou *"Mano que porra foi essa com o Davy Jones no GTA 6?? 😂"*.
+> **Complemente, não repita igual:** Se a Headline na tela diz `"OPINIÃO DO P01 SOBRE GTA 6 ATÉ AGORA!"`, o título do post pode ser algo conversacional e humano como: *"P01 foi MUITO sincero sobre o GTA 6..."* ou *"Mano que porra foi essa com o P03 no GTA 6?? 😂"*.
 
 ### 15 Moldes Prontos de Título da Postagem
 1. `Mano o que aconteceu com o [Streamer] no GTA 6??`

@@ -1,8 +1,8 @@
-"""Editor automático vertical 9:16 (1080x1920, 60 fps) para cortes de GTA 6 (@helixgamess).
+"""Editor automático vertical 9:16 (1080x1920, 60 fps) para cortes de games.
 
 Lê um arquivo JSON de especificação de cortes (--spec), gera os overlays da Headline
 em Poppins Black MAIÚSCULA (Estilos 01 Solta, 02 Tarja Vermelha ou 03 Caixa Branca),
-a marca d'água central @helixgamess (30% de opacidade), transcreve palavra por palavra
+a marca d'água central configurável (30% de opacidade), transcreve palavra por palavra
 via faster-whisper para legenda dinâmica POP de 1 palavra, normaliza o áudio em 2 passes
 para -14 LUFS (padrão YouTube) e renderiza em corte seco usando FFmpeg (h264_nvenc com
 fallback automático para libx264).
@@ -794,7 +794,7 @@ def render_vertical_clip(
     headline_lines = list(clip["headline"])
     headline_style = str(clip.get("headline_estilo", "solta"))
     headline_dur = min(duration, max(5.0, float(clip.get("headline_duracao_seg", 7.0))))
-    watermark_text = str(clip.get("watermark", "@helixgamess"))
+    watermark_text = str(clip.get("watermark", "@user"))
     accent_color = str(clip.get("legenda_cor", "amarelo"))
     clip_id = str(clip["id"])
 
@@ -985,7 +985,7 @@ def process_spec(spec_path: Path, encoder: str = "auto") -> list[Path]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Renderiza cortes verticais 9:16 (1080x1920 60fps) para @helixgamess."
+        description="Renderiza cortes verticais 9:16 (1080x1920 60fps)."
     )
     parser.add_argument("--spec", required=True, help="Caminho para o arquivo JSON de especificação.")
     parser.add_argument(
