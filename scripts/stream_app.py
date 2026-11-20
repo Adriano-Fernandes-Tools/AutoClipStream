@@ -298,6 +298,7 @@ class JobManager:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._current_proc: subprocess.Popen[str] | None = None
         self._state: dict[str, Any] = {
             "running": False,
             "kind": "",
@@ -311,6 +312,33 @@ class JobManager:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._state)
+
+    def cancel_job(self) -> tuple[bool, str]:
+        """Cancela a tarefa em execução de forma forçada e limpa a árvore de processos."""
+        with self._lock:
+            if not self._state["running"] or self._current_proc is None:
+                return False, "Nenhuma tarefa em execução para cancelar."
+            proc = self._current_proc
+
+        append_log(self._state.get("kind", "JOB").upper(), "Cancelamento de tarefa solicitado pelo usuário...")
+        try:
+            # No Windows, encerra toda a árvore do processo filho
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    creationflags=SUBPROCESS_FLAGS,
+                )
+            else:
+                proc.terminate()
+                time.sleep(0.5)
+                if proc.poll() is None:
+                    proc.kill()
+        except Exception as exc:
+            append_log(self._state.get("kind", "JOB").upper(), f"Erro ao cancelar processo: {exc}")
+            return False, f"Falha ao cancelar: {exc}"
+
+        return True, "Tarefa cancelada com sucesso."
 
     def start_job(
         self,
@@ -371,6 +399,9 @@ class JobManager:
                 env=env,
                 creationflags=SUBPROCESS_FLAGS,
             )
+            with self._lock:
+                self._current_proc = proc
+
             if proc.stdout is not None:
                 for raw in proc.stdout:
                     line = raw.rstrip("\r\n")
@@ -387,6 +418,7 @@ class JobManager:
             append_log(kind.upper(), f"ERRO: {error_msg}")
         finally:
             with self._lock:
+                self._current_proc = None
                 self._state["running"] = False
                 self._state["last_exit_code"] = exit_code
                 self._state["last_error"] = error_msg
@@ -401,6 +433,7 @@ class JobManager:
 RECORDER_MGR = RecorderManager()
 JOB_MGR = JobManager()
 SERVER_REF: dict[str, Any] = {"server": None}
+ANALYZE_CANCEL_EVENTS: dict[str, threading.Event] = {}
 
 
 def _list_untranscribed_queue_files() -> list[Path]:
@@ -588,7 +621,9 @@ class AutoClipWatcher:
 
                             self._processed.add(str(mkv_path))
                             append_log("AUTO-CLIP", f"Analisando momentos: {ch_name}/{mkv_path.name}...")
-                            analysis = analyze_block(ch_name, mkv_path, transcript_json, padroes)
+                            entry, _ = _find_channel_entry(ch_name)
+                            canal_jogo = str(entry.get("jogo") or "").strip() if entry else ""
+                            analysis = analyze_block(ch_name, mkv_path, transcript_json, padroes, jogo=canal_jogo)
                             save_auto_markers(ch_name, mkv_path.stem, analysis)
 
                             score = float(analysis.get("score", 0.0))
@@ -755,6 +790,7 @@ def build_state_payload() -> dict[str, Any]:
                 "url": url,
                 "plataforma": _detect_platform(url),
                 "ativo": bool((entry or {}).get("ativo", False)),
+                "jogo": str((entry or {}).get("jogo") or "geral").strip().lower(),
                 "duracao_bloco_minutos": int(
                     (entry or {}).get(
                         "duracao_bloco_minutos",
@@ -964,6 +1000,12 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             return
 
         try:
+            if path == "/api/job/cancel":
+                self._handle_job_cancel(body)
+                return
+            if path == "/api/channel/set-jogo":
+                self._handle_set_channel_jogo(body)
+                return
             if path == "/api/browse/folder":
                 self._handle_browse_folder()
                 return
@@ -1234,7 +1276,25 @@ class StreamAppHandler(BaseHTTPRequestHandler):
 
     def _handle_transcribe_queue(self, body: dict[str, Any]) -> None:
         channel = sanitize_channel_name(str(body.get("channel") or ""))
-        args = ["--canal", channel, "--pre-transcrever"] if channel else ["--todos", "--pre-transcrever"]
+        files = body.get("files")
+        if files and isinstance(files, list):
+            # Processa arquivos específicos da fila
+            ch_paths = ensure_channel_structure(channel) if channel else None
+            fila_dir = ch_paths["02_para_processar"] if ch_paths else None
+            target_paths: list[str] = []
+            for f in files:
+                p = (fila_dir / Path(f).name) if fila_dir else Path(f)
+                if p.is_file():
+                    target_paths.append(str(p))
+            if not target_paths:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Nenhum arquivo selecionado válido encontrado na fila."})
+                return
+            args = ["--pre-transcrever", *target_paths]
+            if channel:
+                args = ["--canal", channel, *args]
+        else:
+            args = ["--canal", channel, "--pre-transcrever"] if channel else ["--todos", "--pre-transcrever"]
+
         ok, msg = JOB_MGR.start_job("transcrever", channel or "todos", "preparar_lote.py", args)
         if not ok:
             self._send_json(HTTPStatus.CONFLICT, {"error": msg})
@@ -1248,6 +1308,9 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Informe 'channel'."})
             return
 
+        cancel_ev = threading.Event()
+        ANALYZE_CANCEL_EVENTS[channel] = cancel_ev
+
         def _worker() -> None:
             append_log("AUTO-CLIP", f"Iniciando análise manual de cortes para '{channel}'...")
             try:
@@ -1260,6 +1323,10 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                 min_score = float(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE))
                 custom_output = str(padroes.get("output_dir", "")).strip()
 
+                # Busca tag de jogo do canal
+                entry, _ = _find_channel_entry(channel)
+                canal_jogo = str(entry.get("jogo") or "").strip() if entry else ""
+
                 ch_paths = ensure_channel_structure(channel)
                 dir_fila = ch_paths["02_para_processar"]
                 pre_dir = dir_fila / PRE_TRANSCRICOES_DIRNAME
@@ -1267,20 +1334,26 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                     append_log("AUTO-CLIP", f"Pasta 02_para_processar não encontrada em {channel}.")
                     return
 
-                mkv_files = [p for p in sorted(dir_fila.iterdir()) if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS] if dir_fila.exists() else []
-                is_from_lote = False
-                if not mkv_files:
-                    dir_proc = ch_paths["03_em_processamento"]
-                    if dir_proc.exists():
-                        for lote_folder in sorted(dir_proc.iterdir(), reverse=True):
-                            if lote_folder.is_dir():
-                                l_files = [p for p in sorted(lote_folder.iterdir()) if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS]
-                                if l_files:
-                                    mkv_files = l_files
-                                    pre_dir = lote_folder / "transcricoes"
-                                    is_from_lote = True
-                                    append_log("AUTO-CLIP", f"Fila 02_para_processar vazia. Analisando {len(mkv_files)} vídeo(s) do lote '{lote_folder.name}'...")
-                                    break
+                # Se veio lista específica de arquivos na requisição
+                req_files = body.get("files")
+                if req_files and isinstance(req_files, list):
+                    mkv_files = [dir_fila / Path(f).name for f in req_files if (dir_fila / Path(f).name).is_file() and Path(f).suffix.lower() in VIDEO_EXTENSIONS]
+                    is_from_lote = False
+                else:
+                    mkv_files = [p for p in sorted(dir_fila.iterdir()) if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS] if dir_fila.exists() else []
+                    is_from_lote = False
+                    if not mkv_files:
+                        dir_proc = ch_paths["03_em_processamento"]
+                        if dir_proc.exists():
+                            for lote_folder in sorted(dir_proc.iterdir(), reverse=True):
+                                if lote_folder.is_dir():
+                                    l_files = [p for p in sorted(lote_folder.iterdir()) if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS]
+                                    if l_files:
+                                        mkv_files = l_files
+                                        pre_dir = lote_folder / "transcricoes"
+                                        is_from_lote = True
+                                        append_log("AUTO-CLIP", f"Fila 02_para_processar vazia. Analisando {len(mkv_files)} vídeo(s) do lote '{lote_folder.name}'...")
+                                        break
 
                 if not mkv_files:
                     append_log("AUTO-CLIP", f"Nenhum vídeo na fila ou em lotes para {channel}.")
@@ -1288,13 +1361,26 @@ class StreamAppHandler(BaseHTTPRequestHandler):
 
                 cortes_total = 0
                 for mkv_path in mkv_files:
+                    if cancel_ev.is_set():
+                        append_log("AUTO-CLIP", f"Análise de cortes interrompida pelo usuário para '{channel}'.")
+                        break
+
                     transcript_json = pre_dir / f"{mkv_path.stem}.json"
                     append_log("AUTO-CLIP", f"Analisando: {mkv_path.name}...")
-                    analysis = analyze_block(channel, mkv_path, transcript_json if transcript_json.exists() else None, padroes)
+                    analysis = analyze_block(
+                        channel,
+                        mkv_path,
+                        transcript_json if transcript_json.exists() else None,
+                        padroes,
+                        jogo=canal_jogo,
+                    )
                     save_auto_markers(channel, mkv_path.stem, analysis)
                     score = float(analysis.get("score", 0.0))
                     momentos = analysis.get("momentos", [])
                     append_log("AUTO-CLIP", f"[{channel}] {mkv_path.name}: Score {score:.0f}/100 | {len(momentos)} momentos")
+
+                    if cancel_ev.is_set():
+                        break
 
                     # Extrai clips se ha momentos detectados, independente do score global.
                     # Ordena por score para pegar os melhores primeiro.
@@ -1311,6 +1397,8 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                             dur_video = float(probe_video(mkv_path)["duration"])
                             top_momentos = sorted(momentos, key=lambda x: float(x.get("score", 0)), reverse=True)[:4]
                             for idx, m in enumerate(top_momentos, start=1):
+                                if cancel_ev.is_set():
+                                    break
                                 center = float(m.get("segundo", 0))
                                 inicio = max(0.0, center - 12.0)
                                 dur_corte = min(dur_video - inicio, 35.0)
@@ -1334,7 +1422,7 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                                 cortes_bloco += 1
 
                             deletar_bloco = bool(padroes.get("deletar_bloco_apos_clip", DEFAULT_DELETE_BLOCK_AFTER_CLIP))
-                            if deletar_bloco and cortes_bloco > 0 and not is_from_lote:
+                            if deletar_bloco and cortes_bloco > 0 and not is_from_lote and not cancel_ev.is_set():
                                 try:
                                     mkv_path.unlink(missing_ok=True)
                                     append_log("AUTO-CLIP", f"Bloco da fila (02_para_processar) removido para economizar espaço: {mkv_path.name}")
@@ -1343,9 +1431,12 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                         except Exception as exc:
                             append_log("AUTO-CLIP", f"Erro ao cortar clip: {exc}")
 
-                append_log("AUTO-CLIP", f"Finalizada análise de {channel}. Total de {cortes_total} clip(s) extraído(s).")
+                if not cancel_ev.is_set():
+                    append_log("AUTO-CLIP", f"Finalizada análise de {channel}. Total de {cortes_total} clip(s) extraído(s).")
             except Exception as exc:
                 append_log("AUTO-CLIP", f"Erro na análise de cortes: {exc}")
+            finally:
+                ANALYZE_CANCEL_EVENTS.pop(channel, None)
 
         threading.Thread(target=_worker, daemon=True, name="manual-clip-analysis").start()
         self._send_json(HTTPStatus.OK, {"ok": True, "message": f"Análise de cortes iniciada para '{channel}'."})
@@ -1402,6 +1493,12 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             args.append("--sem-whisper")
         if body.get("sem_frames"):
             args.append("--sem-frames")
+
+        files = body.get("files")
+        if files and isinstance(files, list):
+            target_filenames = [Path(f).name for f in files if str(f).strip()]
+            if target_filenames:
+                args.extend(["--arquivos", *target_filenames])
 
         ok, msg = JOB_MGR.start_job("preparar", target_label, "preparar_lote.py", args)
         if not ok:
@@ -1779,6 +1876,58 @@ class StreamAppHandler(BaseHTTPRequestHandler):
 
         threading.Thread(target=_install_worker, daemon=True, name="ollama-install").start()
         self._send_json(HTTPStatus.OK, {"ok": True, "message": "Instalação silenciosa do Ollama disparada via winget."})
+
+    def _handle_job_cancel(self, body: dict[str, Any]) -> None:
+        channel = sanitize_channel_name(str(body.get("channel") or ""))
+        cancelled_any = False
+        msgs: list[str] = []
+
+        # Cancela processo subprocess gerenciado por JOB_MGR
+        if JOB_MGR.snapshot().get("running"):
+            ok, msg = JOB_MGR.cancel_job()
+            if ok:
+                cancelled_any = True
+                msgs.append(msg)
+
+        # Cancela event de análise manual de cortes se ativo
+        if channel and channel in ANALYZE_CANCEL_EVENTS:
+            ANALYZE_CANCEL_EVENTS[channel].set()
+            cancelled_any = True
+            msgs.append(f"Análise de cortes do canal '{channel}' cancelada.")
+        elif not channel and ANALYZE_CANCEL_EVENTS:
+            for ch, ev in list(ANALYZE_CANCEL_EVENTS.items()):
+                ev.set()
+            cancelled_any = True
+            msgs.append("Todas as análises manuais de corte foram canceladas.")
+
+        if cancelled_any:
+            self._send_json(HTTPStatus.OK, {"ok": True, "message": " | ".join(msgs)})
+        else:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Nenhuma tarefa em execução para cancelar."})
+
+    def _handle_set_channel_jogo(self, body: dict[str, Any]) -> None:
+        channel = sanitize_channel_name(str(body.get("channel") or ""))
+        jogo = str(body.get("jogo") or "").strip().lower()
+        if not channel:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Informe 'channel'."})
+            return
+
+        cfg = load_channels_config()
+        canais = cfg.setdefault("canais", [])
+        found = False
+        for c in canais:
+            if sanitize_channel_name(c.get("nome", "")) == channel:
+                c["jogo"] = jogo
+                found = True
+                break
+
+        if not found:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": f"Canal '{channel}' não encontrado em canais.json."})
+            return
+
+        _save_channels_config(cfg)
+        append_log("APP", f"Jogo/Categoria de '{channel}' alterado para: '{jogo or 'Geral'}'.")
+        self._send_json(HTTPStatus.OK, {"ok": True, "channel": channel, "jogo": jogo})
 
     def _handle_shutdown(self) -> None:
         self._send_json(HTTPStatus.OK, {"ok": True, "message": "Encerrando servidor..."})
