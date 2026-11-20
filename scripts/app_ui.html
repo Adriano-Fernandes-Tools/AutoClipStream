@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stream-clipping</title>
+<title>AutoClipStream</title>
+<link rel="icon" type="image/x-icon" href="/assets/favicon.ico">
+<link rel="icon" type="image/svg+xml" href="/assets/logo.svg">
 <style>
 :root {
   --bg-app: #0f1117;
@@ -74,14 +76,17 @@ html, body {
   width: 28px;
   height: 28px;
   border-radius: 7px;
-  background: var(--accent-bg);
-  border: 1px solid var(--accent-border);
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  color: #c4b5fd;
+  flex-shrink: 0;
+}
+.brand-mark img {
+  width: 28px;
+  height: 28px;
+  display: block;
+  border-radius: 7px;
 }
 
 .brand-name { font-size: 14px; font-weight: 600; letter-spacing: -0.2px; }
@@ -847,7 +852,7 @@ details.resumo-box pre {
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-left">
-        <div class="brand-mark">SC</div>
+        <div class="brand-mark"><img src="/assets/logo_64.png" alt="AutoClipStream"></div>
         <span class="brand-name">Stream-clipping</span>
       </div>
       <span id="recBadge" class="rec-badge">IDLE</span>
