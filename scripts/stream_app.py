@@ -546,8 +546,35 @@ class AutoTranscribeWatcher:
 AUTO_TRANSCRIBE = AutoTranscribeWatcher()
 
 
+def _resolve_transcript_json(mkv_path: Path, pre_dir: Path) -> Path | None:
+    """Finds the transcript JSON for a video block, checking multiple locations.
+
+    Search order:
+      1. _pre_transcricoes/<stem>.json  (auto-transcribed before batch)
+      2. 03_em_processamento/<lote>/transcricoes/<stem>.json  (moved to batch)
+      3. 04_para_edicao/<lote>/transcricoes/<stem>.json       (batch finalised)
+    """
+    # 1. pre-transcription cache (most common for auto-clip mode)
+    candidate = pre_dir / f"{mkv_path.stem}.json"
+    if candidate.exists():
+        return candidate
+
+    # 2 & 3. scan processing and editing batch folders
+    channel_dir = mkv_path.parent.parent  # canais/<canal>/
+    for batch_root in ("03_em_processamento", "04_para_edicao"):
+        batch_base = channel_dir / batch_root
+        if not batch_base.exists():
+            continue
+        for lote_dir in sorted(batch_base.iterdir(), reverse=True):
+            if not lote_dir.is_dir():
+                continue
+            tr = lote_dir / "transcricoes" / f"{mkv_path.stem}.json"
+            if tr.exists():
+                return tr
+    return None
+
+
 def select_top_momentos(
-    momentos: list[dict[str, Any]],
     max_clips: int = 5,
     min_distance_sec: float = 35.0,
 ) -> list[dict[str, Any]]:
@@ -612,7 +639,7 @@ class AutoClipWatcher:
                         ch_paths = ensure_channel_structure(ch_name)
                         dir_fila = ch_paths["02_para_processar"]
                         pre_dir = dir_fila / PRE_TRANSCRICOES_DIRNAME
-                        if not dir_fila.exists() or not pre_dir.exists():
+                        if not dir_fila.exists():
                             continue
 
                         for mkv_path in sorted(dir_fila.iterdir()):
@@ -621,28 +648,33 @@ class AutoClipWatcher:
                             if not mkv_path.is_file() or mkv_path.suffix.lower() not in VIDEO_EXTENSIONS:
                                 continue
 
-                            transcript_json = pre_dir / f"{mkv_path.stem}.json"
-                            # Se modo de transcrição for automático, aguarda o Whisper concluir antes de analisar
+                            transcript_json = _resolve_transcript_json(mkv_path, pre_dir)
+                            # Se modo de transcrição for automático, aguarda o Whisper concluir antes de analisar.
+                            # Regra: se não há transcrição ainda, só avança se o JOB_MGR não estiver rodando
+                            # (i.e., Whisper terminou ou nunca foi disparado) E o arquivo já é antigo o suficiente.
                             modo_tr = str(padroes.get("modo_transcricao", "automatico")).lower()
-                            if modo_tr == "automatico" and not transcript_json.exists():
+                            if modo_tr == "automatico" and transcript_json is None:
+                                # Se há um job rodando (Whisper provavelmente), aguarda sem timeout
+                                if JOB_MGR.snapshot()["running"]:
+                                    continue
+                                # Sem job rodando: aguarda pelo menos 60s após o arquivo parar de ser escrito
+                                # para garantir que o gravador fechou o segmento antes de analisar
                                 try:
                                     age = time.time() - mkv_path.stat().st_mtime
                                 except OSError:
                                     age = 0
-                                if age < 180:
+                                if age < 60:
                                     continue
 
-                            if not transcript_json.exists():
-                                transcript_json = None  # type: ignore[assignment]
-
                             marker_file = ch_paths["root"] / "marcadores_automaticos" / f"{mkv_path.stem}.json"
-                            # Se o bloco tem transcrição salva mas o marcador_file foi gerado antes da transcrição existir
-                            # (sem texto/sem momentos), permite reanalisar com a transcrição completa.
+                            # Reanalize if: transcript is now available but the previous analysis was audio-only
+                            # (text_score == 0 means Whisper hadn't run yet when the marker was written).
                             should_reanalyze = False
                             if marker_file.exists():
                                 try:
                                     old_m = json.loads(marker_file.read_text(encoding="utf-8"))
-                                    if transcript_json is not None and not old_m.get("momentos") and old_m.get("text_score", 0) == 0:
+                                    was_audio_only = old_m.get("text_score", 0) == 0 and old_m.get("ai_score") is None
+                                    if transcript_json is not None and was_audio_only:
                                         should_reanalyze = True
                                 except Exception:
                                     pass
@@ -694,10 +726,11 @@ class AutoClipWatcher:
                                         clip_file = out_base / f"{idx:02d}_{slug}_{int(center)}s.mp4"
                                         _cortar_trecho(mkv_path, clip_file, inicio, dur_corte, modo_copia=False, encoder="auto")
 
-                                        # Salva legenda sincronizada .srt para o clipe
+                                        # Resolve transcript at cut time — file may have been moved to a batch folder
+                                        tr_at_cut = _resolve_transcript_json(mkv_path, pre_dir)
                                         try:
-                                            if transcript_json is not None and Path(transcript_json).exists():
-                                                raw_tr = json.loads(Path(transcript_json).read_text(encoding="utf-8"))
+                                            if tr_at_cut is not None and tr_at_cut.exists():
+                                                raw_tr = json.loads(tr_at_cut.read_text(encoding="utf-8"))
                                                 segs = raw_tr if isinstance(raw_tr, list) else raw_tr.get("segments", [])
                                                 gerar_srt_trecho(segs, inicio, dur_corte, clip_file.with_suffix(".srt"))
                                         except Exception:
@@ -707,7 +740,11 @@ class AutoClipWatcher:
                                         cortes_feitos += 1
 
                                     deletar_bloco = bool(padroes.get("deletar_bloco_apos_clip", DEFAULT_DELETE_BLOCK_AFTER_CLIP))
-                                    if deletar_bloco and cortes_feitos > 0:
+                                    # Only delete the source block if the clip was made WITH transcript context.
+                                    # Without a transcript the auto-clip result is audio-only and may be poor quality;
+                                    # keeping the file allows a re-analysis once Whisper finishes.
+                                    had_transcript = transcript_json is not None
+                                    if deletar_bloco and cortes_feitos > 0 and had_transcript:
                                         try:
                                             mkv_path.unlink(missing_ok=True)
                                             append_log("AUTO-CLIP", f"Bloco da fila (02_para_processar) removido para economizar espaço: {mkv_path.name}")
@@ -1428,12 +1465,12 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                         append_log("AUTO-CLIP", f"Análise de cortes interrompida pelo usuário para '{channel}'.")
                         break
 
-                    transcript_json = pre_dir / f"{mkv_path.stem}.json"
+                    transcript_json = _resolve_transcript_json(mkv_path, pre_dir)
                     append_log("AUTO-CLIP", f"Analisando: {mkv_path.name}...")
                     analysis = analyze_block(
                         channel,
                         mkv_path,
-                        transcript_json if transcript_json.exists() else None,
+                        transcript_json,
                         padroes,
                         jogo=resolved_jogo,
                     )
@@ -1472,9 +1509,11 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                                 clip_file = out_base / f"{idx:02d}_{slug}_{int(center)}s.mp4"
                                 _cortar_trecho(mkv_path, clip_file, inicio, dur_corte, modo_copia=False, encoder="auto")
 
-                                if transcript_json.exists():
+                                # Resolve transcript at cut time — file may have moved to a batch folder
+                                tr_at_cut = _resolve_transcript_json(mkv_path, pre_dir)
+                                if tr_at_cut is not None and tr_at_cut.exists():
                                     try:
-                                        raw_tr = json.loads(transcript_json.read_text(encoding="utf-8"))
+                                        raw_tr = json.loads(tr_at_cut.read_text(encoding="utf-8"))
                                         segs = raw_tr if isinstance(raw_tr, list) else raw_tr.get("segments", [])
                                         gerar_srt_trecho(segs, inicio, dur_corte, clip_file.with_suffix(".srt"))
                                     except Exception:

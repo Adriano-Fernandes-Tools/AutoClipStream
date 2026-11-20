@@ -474,11 +474,13 @@ def analyze_block(
 
     for peak in audio_peaks:
         if peak["score"] >= 50:
+            seg = int(peak["segundo"])
+            m_label = f"{seg // 60}m{seg % 60:02d}s"
             momentos.append({
                 "segundo": peak["segundo"],
                 "score": peak["score"],
                 "tipo": "audio_peak",
-                "descricao": f"Pico de áudio: {peak['score']:.0f}/100",
+                "descricao": f"momento_{m_label}",
             })
 
     for peak in text_peaks:
