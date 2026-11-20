@@ -352,7 +352,7 @@ def analyze_block(
     ai_score: int | None = None
     ai_momentos: list[dict[str, Any]] = []
 
-    if ai_backend in ("api", "local") and transcript_segs:
+    if ai_backend in ("api", "local", "local_custom") and transcript_segs:
         transcript_text = " ".join(str(s.get("text", "")) for s in transcript_segs)
         if ai_backend == "api":
             result = score_ai_api(

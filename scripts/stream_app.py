@@ -56,6 +56,7 @@ from config import (
     VIDEO_EXTENSIONS,
     ensure_channel_structure,
     format_mmss,
+    gerar_srt_trecho,
     get_canais_dir,
     get_python_console_exe,
     list_channel_names,
@@ -584,7 +585,16 @@ class AutoClipWatcher:
                                         slug = _slugify(desc, max_len=36)
                                         clip_file = out_base / f"{idx:02d}_{slug}_{int(center)}s.mp4"
                                         _cortar_trecho(mkv_path, clip_file, inicio, dur_corte, modo_copia=False, encoder="auto")
-                                        append_log("AUTO-CLIP", f"★ Clip extraído ({format_mmss(inicio)} -> {format_mmss(inicio+dur_corte)}): {clip_file.name}")
+
+                                        # Salva legenda sincronizada .srt para o clipe
+                                        try:
+                                            raw_tr = json.loads(transcript_json.read_text(encoding="utf-8"))
+                                            segs = raw_tr if isinstance(raw_tr, list) else raw_tr.get("segments", [])
+                                            gerar_srt_trecho(segs, inicio, dur_corte, clip_file.with_suffix(".srt"))
+                                        except Exception:
+                                            pass
+
+                                        append_log("AUTO-CLIP", f"★ Clip e legenda (.srt) extraídos ({format_mmss(inicio)} -> {format_mmss(inicio+dur_corte)}): {clip_file.name}")
                                 except Exception as exc:
                                     append_log("AUTO-CLIP", f"Aviso ao cortar clip: {exc}")
 
@@ -891,6 +901,15 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             return
 
         try:
+            if path == "/api/browse/folder":
+                self._handle_browse_folder()
+                return
+            if path == "/api/channel/transcribe-queue":
+                self._handle_transcribe_queue(body)
+                return
+            if path == "/api/channel/analyze-clips":
+                self._handle_analyze_clips(body)
+                return
             if path == "/api/channels/save":
                 self._handle_channels_save(body)
                 return
@@ -1035,10 +1054,10 @@ class StreamAppHandler(BaseHTTPRequestHandler):
         ai_backend = body.get("ai_backend")
         if ai_backend is not None:
             ai_backend_norm = str(ai_backend).strip().lower()
-            if ai_backend_norm not in ("desabilitado", "api", "local"):
+            if ai_backend_norm not in ("desabilitado", "api", "local", "local_custom"):
                 self._send_json(
                     HTTPStatus.BAD_REQUEST,
-                    {"error": "ai_backend inválido. Use 'desabilitado', 'api' ou 'local'."},
+                    {"error": "ai_backend inválido. Use 'desabilitado', 'api', 'local' ou 'local_custom'."},
                 )
                 return
             padroes["ai_backend"] = ai_backend_norm
@@ -1128,7 +1147,7 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                 root = tk.Tk()
                 root.withdraw()
                 root.attributes("-topmost", True)
-                selected = filedialog.askdirectory(title="Selecione a pasta de canais e gravações")
+                selected = filedialog.askdirectory(title="Selecione a pasta")
                 root.destroy()
                 if selected:
                     result_path[0] = str(Path(selected).resolve())
@@ -1139,6 +1158,96 @@ class StreamAppHandler(BaseHTTPRequestHandler):
         t.start()
         t.join(timeout=60)
         self._send_json(HTTPStatus.OK, {"path": result_path[0]})
+
+    def _handle_transcribe_queue(self, body: dict[str, Any]) -> None:
+        channel = sanitize_channel_name(str(body.get("channel") or ""))
+        args = ["--canal", channel, "--pre-transcrever"] if channel else ["--todos", "--pre-transcrever"]
+        ok, msg = JOB_MGR.start_job("transcrever", channel or "todos", "preparar_lote.py", args)
+        if not ok:
+            self._send_json(HTTPStatus.CONFLICT, {"error": msg})
+            return
+        append_log("APP", f"Transcrição manual da fila iniciada para '{channel or 'todos'}'.")
+        self._send_json(HTTPStatus.OK, {"ok": True, "message": msg})
+
+    def _handle_analyze_clips(self, body: dict[str, Any]) -> None:
+        channel = sanitize_channel_name(str(body.get("channel") or ""))
+        if not channel:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Informe 'channel'."})
+            return
+
+        def _worker() -> None:
+            append_log("AUTO-CLIP", f"Iniciando análise manual de cortes para '{channel}'...")
+            try:
+                from auto_clip import analyze_block, save_auto_markers
+                from cortar_marcadores import _cortar_trecho, _slugify
+                from premiere_xml import probe_video
+
+                cfg = load_channels_config()
+                padroes = cfg.get("padroes", {})
+                min_score = float(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE))
+                custom_output = str(padroes.get("output_dir", "")).strip()
+
+                ch_paths = ensure_channel_structure(channel)
+                dir_fila = ch_paths["02_para_processar"]
+                pre_dir = dir_fila / PRE_TRANSCRICOES_DIRNAME
+                if not dir_fila.exists():
+                    append_log("AUTO-CLIP", f"Pasta 02_para_processar não encontrada em {channel}.")
+                    return
+
+                mkv_files = [p for p in sorted(dir_fila.iterdir()) if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS]
+                if not mkv_files:
+                    append_log("AUTO-CLIP", f"Nenhum vídeo em 02_para_processar para {channel}.")
+                    return
+
+                cortes_total = 0
+                for mkv_path in mkv_files:
+                    transcript_json = pre_dir / f"{mkv_path.stem}.json"
+                    append_log("AUTO-CLIP", f"Analisando: {mkv_path.name}...")
+                    analysis = analyze_block(channel, mkv_path, transcript_json if transcript_json.exists() else None, padroes)
+                    save_auto_markers(channel, mkv_path.stem, analysis)
+                    score = float(analysis.get("score", 0.0))
+                    momentos = analysis.get("momentos", [])
+                    append_log("AUTO-CLIP", f"[{channel}] {mkv_path.name}: Score {score:.0f}/100 | {len(momentos)} momentos")
+
+                    if score >= min_score and momentos:
+                        if custom_output:
+                            out_base = Path(custom_output) / channel / "clips_extraidos"
+                        else:
+                            out_base = ch_paths["05_cortes_extraidos"] / f"cortes_{mkv_path.stem}"
+                        out_base.mkdir(parents=True, exist_ok=True)
+
+                        try:
+                            dur_video = float(probe_video(mkv_path)["duration"])
+                            for idx, m in enumerate(momentos[:4], start=1):
+                                center = float(m.get("segundo", 0))
+                                inicio = max(0.0, center - 12.0)
+                                dur_corte = min(dur_video - inicio, 35.0)
+                                if dur_corte <= 2.0:
+                                    continue
+                                desc = str(m.get("descricao") or f"momento_{idx}")
+                                slug = _slugify(desc, max_len=36)
+                                clip_file = out_base / f"{idx:02d}_{slug}_{int(center)}s.mp4"
+                                _cortar_trecho(mkv_path, clip_file, inicio, dur_corte, modo_copia=False, encoder="auto")
+
+                                if transcript_json.exists():
+                                    try:
+                                        raw_tr = json.loads(transcript_json.read_text(encoding="utf-8"))
+                                        segs = raw_tr if isinstance(raw_tr, list) else raw_tr.get("segments", [])
+                                        gerar_srt_trecho(segs, inicio, dur_corte, clip_file.with_suffix(".srt"))
+                                    except Exception:
+                                        pass
+
+                                append_log("AUTO-CLIP", f"★ Clip e legenda salvos: {clip_file.name}")
+                                cortes_total += 1
+                        except Exception as exc:
+                            append_log("AUTO-CLIP", f"Erro ao cortar clip: {exc}")
+
+                append_log("AUTO-CLIP", f"Finalizada análise de {channel}. Total de {cortes_total} clip(s) extraído(s).")
+            except Exception as exc:
+                append_log("AUTO-CLIP", f"Erro na análise de cortes: {exc}")
+
+        threading.Thread(target=_worker, daemon=True, name="manual-clip-analysis").start()
+        self._send_json(HTTPStatus.OK, {"ok": True, "message": f"Análise de cortes iniciada para '{channel}'."})
 
     def _handle_record_start(self, body: dict[str, Any]) -> None:
         if body.get("all"):

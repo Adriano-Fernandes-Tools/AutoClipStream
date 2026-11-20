@@ -26,7 +26,14 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from config import FFMPEG_BIN, SUBPROCESS_FLAGS, ensure_channel_structure, format_mmss, load_channels_config
+from config import (
+    FFMPEG_BIN,
+    SUBPROCESS_FLAGS,
+    ensure_channel_structure,
+    format_mmss,
+    gerar_srt_trecho,
+    load_channels_config,
+)
 from premiere_xml import probe_video
 
 
@@ -193,6 +200,23 @@ def exportar_cortes_lote(
             )
             _cortar_trecho(video_path, destino, inicio, dur_corte, modo_copia, encoder)
             gerados.append(destino)
+
+            # Gera legenda .srt correspondente ao clipe
+            try:
+                # Procura transcrição em transcricoes/<stem>.json ou <stem>.json
+                json_candidates = [
+                    edicao_dir / "transcricoes" / f"{video_path.stem}.json",
+                    paths["_historico_lotes"] / lote_id / "transcricoes" / f"{video_path.stem}.json",
+                ]
+                for j_cand in json_candidates:
+                    if j_cand.exists():
+                        raw_data = json.loads(j_cand.read_text(encoding="utf-8"))
+                        segs = raw_data if isinstance(raw_data, list) else raw_data.get("segments", [])
+                        gerar_srt_trecho(segs, inicio, dur_corte, destino.with_suffix(".srt"))
+                        break
+            except Exception:
+                pass
+
             indice += 1
 
     print(f"\n[{safe_name}] {len(gerados)} corte(s) salvo(s) em: {saida_dir}")

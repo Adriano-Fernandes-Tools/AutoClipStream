@@ -824,13 +824,36 @@ details.resumo-box pre {
       <select id="aiBackendSelect">
         <option value="desabilitado">Sem IA (Áudio + Palavras)</option>
         <option value="local">Ollama Local (Gemma 3 4B)</option>
-        <option value="api">API Externa (OpenAI/Groq)</option>
+        <option value="local_custom">IA Local Custom (LM Studio / vLLM)</option>
+        <option value="api">API Externa (OpenAI / OpenRouter / Gemini)</option>
       </select>
       <div id="aiBackendHint" class="mode-hint">Detecção leve sem consumo extra</div>
+
+      <!-- Caixa Ollama -->
       <div id="ollamaControlBox" style="display:none;margin-top:6px;padding-top:6px;border-top:1px dashed var(--hairline);">
         <div id="ollamaStatusText" style="font-size:10.5px;color:var(--text-dim);margin-bottom:4px;">Verificando Ollama...</div>
         <button id="btnPullGemma" class="btn btn-sm" style="width:100%;font-size:10.5px;padding:4px 6px;">Baixar Gemma 3 (4B)</button>
         <button id="btnInstallOllama" class="btn btn-ghost btn-sm" style="width:100%;font-size:10.5px;padding:4px 6px;display:none;margin-top:4px;">Instalar Ollama (WinGet)</button>
+      </div>
+
+      <!-- Caixa IA Local Custom -->
+      <div id="customAiControlBox" style="display:none;margin-top:6px;padding-top:6px;border-top:1px dashed var(--hairline);display:flex;flex-direction:column;gap:4px;">
+        <label class="side-label" style="padding:0;font-size:10px;">URL do Servidor Local</label>
+        <input id="inputLocalAiUrl" type="text" placeholder="http://localhost:11434" style="height:26px;padding:0 6px;border-radius:4px;border:1px solid var(--hairline-strong);background:var(--bg-input);color:var(--text);font-size:10.5px;">
+        <label class="side-label" style="padding:0;font-size:10px;">Modelo Local</label>
+        <input id="inputLocalAiModel" type="text" placeholder="gemma3:4b ou llama3.2" style="height:26px;padding:0 6px;border-radius:4px;border:1px solid var(--hairline-strong);background:var(--bg-input);color:var(--text);font-size:10.5px;">
+        <button id="btnSaveLocalAi" class="btn btn-sm" style="font-size:10.5px;padding:3px;margin-top:2px;">Salvar IA Local</button>
+      </div>
+
+      <!-- Caixa API Externa -->
+      <div id="apiControlBox" style="display:none;margin-top:6px;padding-top:6px;border-top:1px dashed var(--hairline);display:flex;flex-direction:column;gap:4px;">
+        <label class="side-label" style="padding:0;font-size:10px;">URL da API</label>
+        <input id="inputApiUrl" type="text" placeholder="https://api.openai.com/v1" style="height:26px;padding:0 6px;border-radius:4px;border:1px solid var(--hairline-strong);background:var(--bg-input);color:var(--text);font-size:10.5px;">
+        <label class="side-label" style="padding:0;font-size:10px;">Chave da API (API Key)</label>
+        <input id="inputApiKey" type="password" placeholder="sk-..." style="height:26px;padding:0 6px;border-radius:4px;border:1px solid var(--hairline-strong);background:var(--bg-input);color:var(--text);font-size:10.5px;">
+        <label class="side-label" style="padding:0;font-size:10px;">Modelo</label>
+        <input id="inputApiModel" type="text" placeholder="gpt-4o-mini ou gemini-2.0-flash" style="height:26px;padding:0 6px;border-radius:4px;border:1px solid var(--hairline-strong);background:var(--bg-input);color:var(--text);font-size:10.5px;">
+        <button id="btnSaveApiSettings" class="btn btn-sm" style="font-size:10.5px;padding:3px;margin-top:2px;">Salvar API</button>
       </div>
     </div>
 
@@ -848,9 +871,12 @@ details.resumo-box pre {
 
     <div class="mode-box">
       <label class="side-label" style="padding:0;" for="inputOutputDir">Pasta de Saída dos Clipes</label>
-      <input id="inputOutputDir" type="text" placeholder="(Padrão: 05_cortes_extraidos)" style="width:100%;height:28px;padding:0 8px;border-radius:6px;border:1px solid var(--hairline-strong);background:var(--bg-input);color:var(--text);font-size:11px;">
+      <div style="display:flex;gap:4px;margin-top:2px;">
+        <input id="inputOutputDir" type="text" placeholder="(Padrão: 05_cortes_extraidos)" style="flex:1;height:28px;padding:0 8px;border-radius:6px;border:1px solid var(--hairline-strong);background:var(--bg-input);color:var(--text);font-size:11px;">
+        <button id="btnBrowseOutputDir" class="btn btn-sm" title="Escolher pasta no computador" style="padding:0 8px;font-size:12px;">📁</button>
+      </div>
       <div style="display:flex;gap:4px;margin-top:4px;">
-        <button id="btnSaveOutputDir" class="btn btn-sm" style="flex:1;font-size:10.5px;padding:4px;">Salvar pasta</button>
+        <button id="btnSaveOutputDir" class="btn btn-sm" style="flex:1;font-size:10.5px;padding:4px;">Salvar</button>
         <button id="btnOpenOutputDir" class="btn btn-ghost btn-sm" style="flex:1;font-size:10.5px;padding:4px;">Abrir</button>
       </div>
     </div>
@@ -1049,15 +1075,46 @@ function renderSidebar() {
     selAi.value = aiBackend;
   }
   if (hintAi) {
-    hintAi.textContent = aiBackend === 'local'
-      ? 'Ollama local (Gemma 3 4B) ativo'
-      : (aiBackend === 'api' ? 'Chamando endpoint OpenAI/Groq' : 'Detecção leve sem consumo extra');
+    if (aiBackend === 'local') hintAi.textContent = 'Ollama local (Gemma 3 4B) ativo';
+    else if (aiBackend === 'local_custom') hintAi.textContent = 'IA local personalizada (LM Studio / vLLM)';
+    else if (aiBackend === 'api') hintAi.textContent = 'Chamando API externa (OpenAI / Gemini / OpenRouter)';
+    else hintAi.textContent = 'Detecção leve sem consumo extra';
   }
 
   const ollamaBox = document.getElementById('ollamaControlBox');
   if (ollamaBox) {
     ollamaBox.style.display = aiBackend === 'local' ? 'block' : 'none';
     if (aiBackend === 'local') checkOllamaStatus();
+  }
+
+  const customAiBox = document.getElementById('customAiControlBox');
+  if (customAiBox) {
+    customAiBox.style.display = aiBackend === 'local_custom' ? 'flex' : 'none';
+  }
+  const inLocUrl = document.getElementById('inputLocalAiUrl');
+  if (inLocUrl && document.activeElement !== inLocUrl) {
+    inLocUrl.value = data.padroes?.ai_local_url || 'http://localhost:11434';
+  }
+  const inLocMod = document.getElementById('inputLocalAiModel');
+  if (inLocMod && document.activeElement !== inLocMod) {
+    inLocMod.value = data.padroes?.ai_modelo || 'gemma3:4b';
+  }
+
+  const apiBox = document.getElementById('apiControlBox');
+  if (apiBox) {
+    apiBox.style.display = aiBackend === 'api' ? 'flex' : 'none';
+  }
+  const inApiUrl = document.getElementById('inputApiUrl');
+  if (inApiUrl && document.activeElement !== inApiUrl) {
+    inApiUrl.value = data.padroes?.ai_api_url || '';
+  }
+  const inApiKey = document.getElementById('inputApiKey');
+  if (inApiKey && document.activeElement !== inApiKey) {
+    inApiKey.value = data.padroes?.ai_api_key || '';
+  }
+  const inApiMod = document.getElementById('inputApiModel');
+  if (inApiMod && document.activeElement !== inApiMod) {
+    inApiMod.value = data.padroes?.ai_modelo || '';
   }
 
   const inputDirCanais = document.getElementById('inputDiretorioCanais');
@@ -1222,7 +1279,7 @@ function renderMain() {
           <button class="btn btn-sm" onclick="openSubdir('${escapeHtml(ch.nome)}','03_em_processamento/${escapeHtml(l.lote_id)}')">&#128194; Abrir lote</button>
           ${l.has_decision
             ? `<button class="btn btn-primary btn-sm" ${jobRunning ? 'disabled' : ''} onclick="finalizeLote('${escapeHtml(ch.nome)}','${escapeHtml(l.lote_id)}')">&#127916; Finalizar e Gerar XML</button>`
-            : `<button class="btn btn-sm" onclick="copyChatPrompt('${escapeHtml(ch.nome)}')">&#128203; Copiar prompt pro chat</button>`}
+            : `<button class="btn btn-sm" onclick="openSubdir('${escapeHtml(ch.nome)}','03_em_processamento/${escapeHtml(l.lote_id)}')">Ver arquivos</button>`}
         </div>
       </div>
     `).join('')
@@ -1282,8 +1339,9 @@ function renderMain() {
         ${ch.recording
           ? `<button class="btn btn-red btn-sm" onclick="stopChannel('${escapeHtml(ch.nome)}')">&#9632; Parar</button>`
           : `<button class="btn btn-green btn-sm" ${(!ch.url || isExample) ? 'disabled' : ''} onclick="startChannel('${escapeHtml(ch.nome)}')">&#9679; Gravar</button>`}
-        <button class="btn btn-primary btn-sm" ${(jobRunning || (c['02_para_processar'] || 0) === 0) ? 'disabled' : ''} onclick="prepareChannel('${escapeHtml(ch.nome)}')">&#9889; Preparar Lote</button>
-        <button class="btn btn-sm" onclick="copyChatPrompt('${escapeHtml(ch.nome)}')">&#128203; Copiar prompt pro chat</button>
+        <button class="btn btn-sm" ${jobRunning || (c['02_para_processar'] || 0) === 0 ? 'disabled' : ''} onclick="transcribeChannelQueue('${escapeHtml(ch.nome)}')">🎙️ Transcrever Fila</button>
+        <button class="btn btn-primary btn-sm" ${jobRunning || (c['02_para_processar'] || 0) === 0 ? 'disabled' : ''} onclick="analyzeChannelClips('${escapeHtml(ch.nome)}')">✂️ Gerar Cortes</button>
+        <button class="btn btn-ghost btn-sm" ${jobRunning || (c['02_para_processar'] || 0) === 0 ? 'disabled' : ''} onclick="prepareChannel('${escapeHtml(ch.nome)}')">📦 Lote Premiere</button>
       </div>
     </div>
 
@@ -1581,15 +1639,22 @@ async function clearLogs() {
   } catch (_) {}
 }
 
-async function copyChatPrompt(channelName) {
-  const root = state.data?.project_root || 'E:\\Antigravity\\Stream-clipping';
-  const prompt = `Processa o que temos do canal "${channelName}" em ${root} seguindo o protocolo do AGENTS.md.`;
+async function transcribeChannelQueue(name) {
   try {
-    await navigator.clipboard.writeText(prompt);
-    showToast('Prompt copiado! Cole no chat do Antigravity.');
-  } catch (_) {
-    window.prompt('Copie o comando abaixo para colar no chat:', prompt);
-  }
+    await api('/api/channel/transcribe-queue', { method: 'POST', body: JSON.stringify({ channel: name }) });
+    state.activeTab = 'logs';
+    showToast(`Transcrição da fila iniciada para ${name}...`);
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+}
+
+async function analyzeChannelClips(name) {
+  try {
+    await api('/api/channel/analyze-clips', { method: 'POST', body: JSON.stringify({ channel: name }) });
+    state.activeTab = 'logs';
+    showToast(`Análise e corte de clipes iniciada para ${name}...`);
+    await refreshState();
+  } catch (err) { showToast(err.message); }
 }
 
 function openChannelModal(channelName) {
@@ -1828,6 +1893,40 @@ document.getElementById('btnOpenDiretorioCanais').onclick = async () => {
   } catch (err) {
     showToast(err.message);
   }
+};
+
+document.getElementById('btnSaveLocalAi').onclick = async () => {
+  const url = (document.getElementById('inputLocalAiUrl')?.value || '').trim();
+  const model = (document.getElementById('inputLocalAiModel')?.value || '').trim();
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({ ai_local_url: url, ai_modelo: model }) });
+    showToast('Configurações de IA local salvas!');
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+};
+
+document.getElementById('btnSaveApiSettings').onclick = async () => {
+  const url = (document.getElementById('inputApiUrl')?.value || '').trim();
+  const key = (document.getElementById('inputApiKey')?.value || '').trim();
+  const model = (document.getElementById('inputApiModel')?.value || '').trim();
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({ ai_api_url: url, ai_api_key: key, ai_modelo: model }) });
+    showToast('Configurações de API salvas!');
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+};
+
+document.getElementById('btnBrowseOutputDir').onclick = async () => {
+  try {
+    showToast('Selecione a pasta na janela que se abriu...');
+    const res = await api('/api/browse/folder');
+    if (res && res.path) {
+      document.getElementById('inputOutputDir').value = res.path;
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ output_dir: res.path }) });
+      showToast(`Pasta de saída alterada para: ${res.path}`);
+      await refreshState();
+    }
+  } catch (err) { showToast(err.message); }
 };
 
 document.getElementById('btnSaveOutputDir').onclick = async () => {

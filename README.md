@@ -62,18 +62,20 @@ Pelo painel é possível:
 ### Modo de Análise
 
 1. **Em blocos (Manual):**
-   Os blocos de 10 minutos são gravados e movidos para a pasta de fila. A transcrição e o recorte só ocorrem quando solicitados pelo editor.
+   Os blocos de 10 minutos são gravados e movidos para a pasta de fila. A qualquer momento (gravando ou não), você pode clicar em "Transcrever Fila" e em "Gerar Cortes" para analisar os momentos e extrair os vídeos MP4 com legendas SRT sincronizadas.
 2. **Automático (Ao vivo):**
-   Assim que um bloco de 10 minutos fecha, o sistema transcreve o áudio, calcula o score de destaque do trecho e, caso atinja o limiar configurado, extrai automaticamente os clipes para a pasta de saída.
+   Assim que um bloco de 10 minutos fecha, o sistema transcreve o áudio em background, calcula o score de destaque do trecho (áudio, vocabulário, visão e IA) e, caso atinja o limiar configurado, extrai automaticamente os clipes de vídeo MP4 acompanhados de seus arquivos de legenda SRT na pasta de saída.
 
 ### Auxílio de Inteligência Artificial
 
 1. **Sem IA (Heurística Padrão):**
    Opera 100% offline sem alocação extra de VRAM. Avalia picos de energia acústica RMS via FFmpeg e densidade de vocabulário de impacto na transcrição.
 2. **Ollama Local (Gemma 3 4B):**
-   Executa inferência local via Ollama no endereço `http://localhost:11434`. Permite avaliação semântica refinada sem custos de API e com privacidade total.
-3. **API Externa:**
-   Permite conectar endpoints compatíveis com a especificação da OpenAI (Groq, OpenAI, OpenRouter).
+   Executa inferência local via Ollama no endereço `http://localhost:11434`. Permite avaliação semântica e multimodal (Gemma 3 Vision) sem custos de API e com privacidade total.
+3. **IA Local Personalizada (Custom):**
+   Conecta a qualquer servidor local compatível (LM Studio, vLLM, Text Generation WebUI, Ollama com outros modelos) configurando a URL e o nome do modelo.
+4. **API Externa:**
+   Permite conectar endpoints compatíveis com a especificação da OpenAI (OpenAI, Gemini, OpenRouter, Groq).
 
 ---
 
