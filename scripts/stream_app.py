@@ -57,6 +57,7 @@ from config import (
     SCRIPTS_DIR,
     SUBPROCESS_FLAGS,
     VIDEO_EXTENSIONS,
+    detect_stream_category,
     ensure_channel_structure,
     format_mmss,
     gerar_srt_trecho,
@@ -545,6 +546,27 @@ class AutoTranscribeWatcher:
 AUTO_TRANSCRIBE = AutoTranscribeWatcher()
 
 
+def select_top_momentos(
+    momentos: list[dict[str, Any]],
+    max_clips: int = 5,
+    min_distance_sec: float = 35.0,
+) -> list[dict[str, Any]]:
+    """Seleciona os melhores momentos com maior score, garantindo distribuição temporal sem sobreposição."""
+    if not momentos:
+        return []
+    sorted_m = sorted(momentos, key=lambda x: float(x.get("score", 0)), reverse=True)
+    selected: list[dict[str, Any]] = []
+    for m in sorted_m:
+        sec = float(m.get("segundo", 0))
+        if any(abs(sec - float(s.get("segundo", 0))) < min_distance_sec for s in selected):
+            continue
+        selected.append(m)
+        if len(selected) >= max_clips:
+            break
+    selected.sort(key=lambda x: float(x.get("segundo", 0)))
+    return selected
+
+
 class AutoClipWatcher:
     """Monitora blocos pré-transcritos e corta clipes automaticamente quando modo_analise == 'automatico'."""
 
@@ -600,7 +622,16 @@ class AutoClipWatcher:
                                 continue
 
                             transcript_json = pre_dir / f"{mkv_path.stem}.json"
-                            # Transcricao e opcional: analisa mesmo sem ela (audio-only)
+                            # Se modo de transcrição for automático, aguarda o Whisper concluir antes de analisar
+                            modo_tr = str(padroes.get("modo_transcricao", "automatico")).lower()
+                            if modo_tr == "automatico" and not transcript_json.exists():
+                                try:
+                                    age = time.time() - mkv_path.stat().st_mtime
+                                except OSError:
+                                    age = 0
+                                if age < 180:
+                                    continue
+
                             if not transcript_json.exists():
                                 transcript_json = None  # type: ignore[assignment]
 
@@ -616,14 +647,22 @@ class AutoClipWatcher:
                                 except Exception:
                                     pass
 
-                            if (marker_file.exists() and not should_reanalyze) or str(mkv_path) in self._processed:
+                            if should_reanalyze:
+                                self._processed.discard(str(mkv_path))
+                            elif marker_file.exists() or str(mkv_path) in self._processed:
                                 continue
 
                             self._processed.add(str(mkv_path))
                             append_log("AUTO-CLIP", f"Analisando momentos: {ch_name}/{mkv_path.name}...")
                             entry, _ = _find_channel_entry(ch_name)
-                            canal_jogo = str(entry.get("jogo") or "").strip() if entry else ""
-                            analysis = analyze_block(ch_name, mkv_path, transcript_json, padroes, jogo=canal_jogo)
+                            canal_jogo = str(entry.get("jogo") or "auto").strip().lower() if entry else "auto"
+                            canal_url = str(entry.get("url") or "") if entry else ""
+                            if canal_jogo in ("auto", "") and canal_url:
+                                cat_info = detect_stream_category(canal_url)
+                                resolved_jogo = cat_info.get("tag") or "geral"
+                            else:
+                                resolved_jogo = canal_jogo
+                            analysis = analyze_block(ch_name, mkv_path, transcript_json, padroes, jogo=resolved_jogo)
                             save_auto_markers(ch_name, mkv_path.stem, analysis)
 
                             score = float(analysis.get("score", 0.0))
@@ -643,7 +682,7 @@ class AutoClipWatcher:
                                 try:
                                     dur_video = float(probe_video(mkv_path)["duration"])
                                     cortes_feitos = 0
-                                    top_momentos = sorted(momentos, key=lambda x: float(x.get("score", 0)), reverse=True)[:3]
+                                    top_momentos = select_top_momentos(momentos, max_clips=5, min_distance_sec=35.0)
                                     for idx, m in enumerate(top_momentos, start=1):
                                         center = float(m.get("segundo", 0))
                                         inicio = max(0.0, center - 12.0)
@@ -784,13 +823,16 @@ def build_state_payload() -> dict[str, Any]:
                 and (pre_dir / f"{p.stem}.json").exists()
             )
 
+        cat_info = detect_stream_category(url) if url else {"raw": "", "tag": "geral"}
         canais_out.append(
             {
                 "nome": name,
                 "url": url,
                 "plataforma": _detect_platform(url),
                 "ativo": bool((entry or {}).get("ativo", False)),
-                "jogo": str((entry or {}).get("jogo") or "geral").strip().lower(),
+                "jogo": str((entry or {}).get("jogo") or "auto").strip().lower(),
+                "categoria_detectada": cat_info.get("raw", ""),
+                "tag_detectada": cat_info.get("tag", "geral"),
                 "duracao_bloco_minutos": int(
                     (entry or {}).get(
                         "duracao_bloco_minutos",
@@ -1323,9 +1365,15 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                 min_score = float(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE))
                 custom_output = str(padroes.get("output_dir", "")).strip()
 
-                # Busca tag de jogo do canal
+                # Busca tag de jogo do canal (ou detecta ao vivo se auto)
                 entry, _ = _find_channel_entry(channel)
-                canal_jogo = str(entry.get("jogo") or "").strip() if entry else ""
+                canal_jogo = str(entry.get("jogo") or "auto").strip().lower() if entry else "auto"
+                canal_url = str(entry.get("url") or "") if entry else ""
+                if canal_jogo in ("auto", "") and canal_url:
+                    cat_info = detect_stream_category(canal_url)
+                    resolved_jogo = cat_info.get("tag") or "geral"
+                else:
+                    resolved_jogo = canal_jogo
 
                 ch_paths = ensure_channel_structure(channel)
                 dir_fila = ch_paths["02_para_processar"]
@@ -1372,7 +1420,7 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                         mkv_path,
                         transcript_json if transcript_json.exists() else None,
                         padroes,
-                        jogo=canal_jogo,
+                        jogo=resolved_jogo,
                     )
                     save_auto_markers(channel, mkv_path.stem, analysis)
                     score = float(analysis.get("score", 0.0))
@@ -1395,7 +1443,7 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                         cortes_bloco = 0
                         try:
                             dur_video = float(probe_video(mkv_path)["duration"])
-                            top_momentos = sorted(momentos, key=lambda x: float(x.get("score", 0)), reverse=True)[:4]
+                            top_momentos = select_top_momentos(momentos, max_clips=5, min_distance_sec=35.0)
                             for idx, m in enumerate(top_momentos, start=1):
                                 if cancel_ev.is_set():
                                     break
@@ -1957,7 +2005,7 @@ def _wait_for_server(host: str, port: int, timeout: float = 15.0) -> bool:
 
 
 def _launch_edge_and_watch(host: str, port: int) -> None:
-    """Abre o aplicativo em modo Edge --app e pergunta ao usuario quando a janela for fechada pelo 'X'."""
+    """Abre o aplicativo em modo Edge --app ou no navegador padrão."""
     _wait_for_server(host, port)
     edge_paths = [
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -1971,43 +2019,9 @@ def _launch_edge_and_watch(host: str, port: int) -> None:
         cmd = ["cmd", "/c", "start", url]
 
     try:
-        proc = subprocess.Popen(cmd)
-        proc.wait()
-    except Exception:
-        return
-
-    srv = SERVER_REF.get("server")
-    if srv is not None:
-        try:
-            import tkinter as tk
-            from tkinter import messagebox
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            encerrar = messagebox.askyesno(
-                title="AutoClipStream — Janela Fechada",
-                message=(
-                    "Você fechou a janela do AutoClipStream.\n\n"
-                    "Deseja ENCERRAR o servidor e todas as gravações ativas?\n\n"
-                    "• Sim = Encerra gravações com segurança e desliga o servidor.\n"
-                    "• Não = Mantém o servidor rodando em segundo plano.\n\n"
-                    f"Acesse pelo navegador a qualquer momento em:\n{url}"
-                ),
-                default="no",
-            )
-            root.destroy()
-            if encerrar:
-                threading.Thread(
-                    target=lambda: (
-                        AUTO_CLIP.stop(),
-                        AUTO_TRANSCRIBE.stop(),
-                        RECORDER_MGR.stop_all(6.0),
-                        srv.shutdown(),
-                    ),
-                    daemon=True,
-                ).start()
-        except Exception as exc:
-            append_log("APP", f"Erro no diálogo de fechamento: {exc}")
+        subprocess.Popen(cmd)
+    except Exception as exc:
+        append_log("APP", f"Aviso ao abrir aplicativo no navegador: {exc}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

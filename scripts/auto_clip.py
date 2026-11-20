@@ -241,6 +241,22 @@ def _load_marketing_guidelines(jogo: str | None = None) -> str:
     return ""
 
 
+def format_transcript_with_timestamps(segments: list[dict[str, Any]], max_chars: int = 12000) -> str:
+    """Formata transcrição com marcações de tempo [MM:SS] cobrindo todo o vídeo."""
+    lines: list[str] = []
+    for s in segments:
+        start_sec = float(s.get("start", 0))
+        m = int(start_sec // 60)
+        sec = int(start_sec % 60)
+        text = str(s.get("text", "")).strip()
+        if text:
+            lines.append(f"[{m:02d}:{sec:02d}] {text}")
+    full = "\n".join(lines)
+    if len(full) > max_chars:
+        return full[:max_chars] + "\n... [transcrição truncada no limite]"
+    return full
+
+
 def _build_ai_prompt(canal: str, transcript_text: str, context: str = "", jogo: str | None = None) -> str:
     guidelines = _load_marketing_guidelines(jogo)
     guide_section = f"\n{guidelines}\n" if guidelines else ""
@@ -250,11 +266,12 @@ def _build_ai_prompt(canal: str, transcript_text: str, context: str = "", jogo: 
         + (f"Jogo/Categoria: {jogo}\n" if jogo else "")
         + (f"Contexto da live: {context}\n" if context else "")
         + guide_section
-        + f"\nTranscrição do bloco de 10 minutos:\n{transcript_text[:3000]}\n\n"
+        + f"\nTranscrição com minutagem do bloco de vídeo (início ao fim):\n{transcript_text}\n\n"
         "Avalie este bloco com um score de 0 a 100 indicando o potencial viral.\n"
-        "Depois liste até 3 momentos específicos com timestamp aproximado (em segundos desde o início do bloco).\n"
-        "Responda APENAS em JSON com este formato:\n"
-        '{"score": 72, "momentos": [{"segundo": 45, "descricao": "reação épica ao clutch"}, ...]}'
+        "Identifique de 3 a 6 dos momentos mais interessantes e virais distribuídos ao longo de TODO o vídeo (início, meio e fim do bloco), sem concentrar apenas nos primeiros minutos.\n"
+        "Para cada momento, indique o segundo exato (em segundos desde o início do bloco, ex: 1m30s = 90) e uma breve descrição do gancho ou clímax.\n"
+        "Responda APENAS em JSON no seguinte formato:\n"
+        '{"score": 75, "momentos": [{"segundo": 95, "descricao": "reação épica ao clutch"}, {"segundo": 340, "descricao": "fuga insana da polícia"}]}'
     )
 
 
@@ -274,7 +291,7 @@ def score_ai_api(
         "model": modelo or "gpt-4o-mini",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.3,
-        "max_tokens": 400,
+        "max_tokens": 1000,
     }).encode("utf-8")
 
     headers = {
@@ -407,11 +424,11 @@ def analyze_block(
     ai_momentos: list[dict[str, Any]] = []
 
     if ai_backend in ("api", "local", "local_custom") and transcript_segs:
-        transcript_text = " ".join(str(s.get("text", "")) for s in transcript_segs)
+        transcript_formatted = format_transcript_with_timestamps(transcript_segs)
         if ai_backend == "api":
             result = score_ai_api(
                 canal=canal,
-                transcript_text=transcript_text,
+                transcript_text=transcript_formatted,
                 api_url=str(config.get("ai_api_url", "")),
                 api_key=str(config.get("ai_api_key", "")),
                 modelo=str(config.get("ai_modelo", "")),
@@ -420,7 +437,7 @@ def analyze_block(
         else:  # local
             result = score_ai_ollama(
                 canal=canal,
-                transcript_text=transcript_text,
+                transcript_text=transcript_formatted,
                 modelo=str(config.get("ai_modelo", "gemma3:4b")),
                 ollama_url=str(config.get("ai_local_url", "http://localhost:11434")),
                 jogo=jogo,

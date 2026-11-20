@@ -13,6 +13,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -372,3 +374,98 @@ def save_manual_markers(channel_name: str, markers: list[dict[str, Any]]) -> Non
         encoding="utf-8",
     )
     os.replace(str(tmp), str(target))
+
+
+# ==============================================================================
+# DETECÇÃO AUTOMÁTICA DE CATEGORIA/JOGO DA LIVE
+# ==============================================================================
+
+STREAM_CATEGORY_CACHE: dict[str, dict[str, Any]] = {}
+_PENDING_CATEGORY_CHECKS: set[str] = set()
+_CATEGORY_LOCK = threading.Lock()
+
+
+def _query_streamlink_category(clean_url: str) -> None:
+    raw_cat = ""
+    tag = "geral"
+    cmd = [get_python_console_exe(), "-m", "streamlink", "--json", clean_url]
+    try:
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=8,
+            creationflags=SUBPROCESS_FLAGS,
+        )
+        if res.returncode == 0 and res.stdout:
+            data = json.loads(res.stdout)
+            raw_cat = str(data.get("metadata", {}).get("category") or "").strip()
+    except Exception:
+        pass
+
+    if raw_cat:
+        lower = raw_cat.lower()
+        if "grand theft auto" in lower or "gta" in lower:
+            tag = "gta"
+        elif "fortnite" in lower:
+            tag = "fortnite"
+        else:
+            slug = re.sub(r"[^\w]+", "-", lower).strip("-")
+            if MARKETING_DIR.exists() and (MARKETING_DIR / slug).is_dir():
+                tag = slug
+            else:
+                tag = "geral"
+
+    with _CATEGORY_LOCK:
+        STREAM_CATEGORY_CACHE[clean_url] = {
+            "raw": raw_cat,
+            "tag": tag,
+            "timestamp": time.time(),
+        }
+        _PENDING_CATEGORY_CHECKS.discard(clean_url)
+
+
+def detect_stream_category(url: str, cache_ttl: float = 300.0, block: bool = False) -> dict[str, str]:
+    """Detecta categoria/jogo ao vivo via streamlink com cache em memória.
+
+    Por padrão (block=False), não trava a requisição HTTP: retorna o cache atual imediatamente
+    e faz a busca em segundo plano para que a tela abra instantaneamente.
+    Retorna {'raw': 'Grand Theft Auto VI', 'tag': 'gta'}.
+    """
+    clean_url = (url or "").strip()
+    if not clean_url or "exemplo" in clean_url.lower():
+        return {"raw": "", "tag": "geral"}
+
+    now = time.time()
+    with _CATEGORY_LOCK:
+        cached = STREAM_CATEGORY_CACHE.get(clean_url)
+        is_fresh = cached and (now - float(cached.get("timestamp", 0)) < cache_ttl)
+        if is_fresh:
+            return {"raw": str(cached.get("raw", "")), "tag": str(cached.get("tag", "geral"))}
+
+        if clean_url in _PENDING_CATEGORY_CHECKS:
+            if cached:
+                return {"raw": str(cached.get("raw", "")), "tag": str(cached.get("tag", "geral"))}
+            return {"raw": "", "tag": "geral"}
+
+        _PENDING_CATEGORY_CHECKS.add(clean_url)
+
+    if block:
+        _query_streamlink_category(clean_url)
+        with _CATEGORY_LOCK:
+            res = STREAM_CATEGORY_CACHE.get(clean_url, {"raw": "", "tag": "geral"})
+            return {"raw": str(res.get("raw", "")), "tag": str(res.get("tag", "geral"))}
+    else:
+        t = threading.Thread(
+            target=_query_streamlink_category,
+            args=(clean_url,),
+            daemon=True,
+            name=f"cat-detector-{clean_url[-12:]}",
+        )
+        t.start()
+        if cached:
+            return {"raw": str(cached.get("raw", "")), "tag": str(cached.get("tag", "geral"))}
+        return {"raw": "", "tag": "geral"}
+

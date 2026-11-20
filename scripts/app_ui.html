@@ -211,6 +211,17 @@ html, body {
   color: var(--text);
   font-weight: 600;
 }
+.side-item.ch-inactive {
+  opacity: 0.42;
+  filter: grayscale(0.5);
+}
+.side-item.ch-inactive:hover {
+  opacity: 0.85;
+  filter: none;
+}
+.side-item.ch-inactive .ch-name {
+  color: var(--text-dim);
+}
 
 .ch-left {
   display: flex;
@@ -1308,14 +1319,17 @@ function renderSidebar() {
   listEl.innerHTML = '';
   for (const ch of data.canais) {
     const btn = document.createElement('button');
-    btn.className = 'side-item' + (ch.nome === state.selectedChannel ? ' active' : '');
+    const isInactive = !ch.ativo;
+    btn.className = 'side-item' + (ch.nome === state.selectedChannel ? ' active' : '') + (isInactive ? ' ch-inactive' : '');
+    btn.title = ch.nome + (isInactive ? ' (Desativado)' : '');
     const plat = platInfo(ch.plataforma);
     const fila = ch.counts['02_para_processar'] || 0;
 
     btn.innerHTML = `
       <span class="ch-left">
         ${ch.recording ? '<span class="pulse-dot" title="Gravando"></span>' : ''}
-        <span class="ch-name" title="${escapeHtml(ch.nome)}">${escapeHtml(ch.nome)}</span>
+        <span class="ch-name">${escapeHtml(ch.nome)}</span>
+        ${isInactive ? '<span style="font-size:9px;color:var(--text-dim);opacity:0.75;margin-left:2px;">(off)</span>' : ''}
       </span>
       <span class="ch-right">
         ${(!ch.recording && ch.last_error) ? `<span class="err-pill" title="${escapeHtml(ch.last_error)}">!</span>` : ''}
@@ -1506,7 +1520,8 @@ function renderMain() {
           <div style="margin-left:8px;display:inline-flex;align-items:center;gap:4px;">
             <label style="font-size:11px;color:var(--text-dim);font-weight:normal;" for="selJogo_${escapeHtml(ch.nome)}">Jogo/Marketing:</label>
             <select id="selJogo_${escapeHtml(ch.nome)}" style="padding:2px 8px;font-size:11px;border-radius:4px;background:var(--bg-input);border:1px solid var(--hairline-strong);color:var(--accent);" onchange="setChannelJogo('${escapeHtml(ch.nome)}', this.value)">
-              <option value="geral" ${(!ch.jogo || ch.jogo === 'geral') ? 'selected' : ''}>Geral (Regras universais)</option>
+              <option value="auto" ${(!ch.jogo || ch.jogo === 'auto') ? 'selected' : ''}>Automático ${ch.categoria_detectada ? `(Ao vivo: ${(ch.tag_detectada || 'geral').toUpperCase()} [${escapeHtml(ch.categoria_detectada)}])` : '(Detectar da live)'}</option>
+              <option value="geral" ${ch.jogo === 'geral' ? 'selected' : ''}>Geral (Regras universais)</option>
               <option value="gta" ${ch.jogo === 'gta' ? 'selected' : ''}>GTA (Fugas, polícia, perseguição)</option>
               <option value="fortnite" ${ch.jogo === 'fortnite' ? 'selected' : ''}>Fortnite (Clutch, vitórias, itens)</option>
             </select>
@@ -1680,6 +1695,7 @@ function renderAll() {
 
 function switchTab(tab) {
   state.activeTab = tab;
+  state._lastRenderSig = null;
   renderMain();
 }
 
@@ -1700,6 +1716,7 @@ async function refreshState() {
 
     // Recarrega detalhes quando um job termina ou canal muda
     if (prevSelected !== state.selectedChannel || (prevJobRunning && !data.job.running)) {
+      state._lastRenderSig = null;
       if (state.selectedChannel) loadDetails(state.selectedChannel, false);
     }
 
@@ -1707,10 +1724,34 @@ async function refreshState() {
     renderSidebar();
     renderJobBanner();
 
+    const activeEl = document.activeElement;
+    const isUserInteracting = Boolean(
+      activeEl && (
+        activeEl.tagName === 'SELECT' ||
+        activeEl.tagName === 'INPUT' ||
+        activeEl.tagName === 'TEXTAREA' ||
+        (activeEl.id && activeEl.id.startsWith('selJogo')) ||
+        (activeEl.closest && activeEl.closest('.modal-backdrop'))
+      )
+    ) || Boolean(document.querySelector('.modal-backdrop.open'));
+
+    const ch = getSelectedChannelObj();
+    const currentSig = JSON.stringify({
+      tab: state.activeTab,
+      chNome: ch?.nome,
+      recording: ch?.recording,
+      lastError: ch?.last_error,
+      counts: ch?.counts,
+      jogo: ch?.jogo,
+      catDet: ch?.categoria_detectada,
+      jobRunning: data?.job?.running,
+      jobText: data?.job?.text,
+      detailsLen: state.details[ch?.nome]?.lotes?.length,
+    });
+
     if (state.activeTab === 'logs' && document.getElementById('logConsole')) {
       if (data.logs.length !== prevLogsLen) renderLogs();
-    } else if (document.activeElement && document.activeElement.id === 'inputMarkerNote') {
-      const ch = getSelectedChannelObj();
+    } else if (activeEl && activeEl.id === 'inputMarkerNote') {
       const posEl = document.getElementById('markerPosLabel');
       const cntEl = document.getElementById('markerCountLabel');
       const addBtn = document.getElementById('btnAddMarker');
@@ -1724,14 +1765,18 @@ async function refreshState() {
         addBtn.disabled = !ch.current_segment;
       }
     } else if (state.activeTab !== 'estado' || !document.getElementById('estadoEditor')) {
-      const openDetails = new Set(
-        Array.from(document.querySelectorAll('details.resumo-box[open] pre'))
-          .map(el => el.id)
-      );
-      renderMain();
-      for (const id of openDetails) {
-        const pre = document.getElementById(id);
-        if (pre && pre.parentElement) pre.parentElement.open = true;
+      // Se o usuário está interagindo ou se o estado não mudou, NÃO destrói o DOM
+      if (!isUserInteracting && state._lastRenderSig !== currentSig) {
+        state._lastRenderSig = currentSig;
+        const openDetails = new Set(
+          Array.from(document.querySelectorAll('details.resumo-box[open] pre'))
+            .map(el => el.id)
+        );
+        renderMain();
+        for (const id of openDetails) {
+          const pre = document.getElementById(id);
+          if (pre && pre.parentElement) pre.parentElement.open = true;
+        }
       }
     }
   } catch (_) {}
@@ -2282,6 +2327,7 @@ document.addEventListener('keydown', (e) => {
 
 async function setChannelJogo(name, jogo) {
   try {
+    state._lastRenderSig = null;
     await api('/api/channel/set-jogo', {
       method: 'POST',
       body: JSON.stringify({ channel: name, jogo }),
