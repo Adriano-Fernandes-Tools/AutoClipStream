@@ -1,0 +1,1695 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stream-clipping</title>
+<style>
+:root {
+  --bg-app: #0f1117;
+  --bg-side: #0d0f15;
+  --bg-surface: #151822;
+  --bg-surface-hover: #1a1e2b;
+  --bg-input: #0b0d13;
+  --hairline: rgba(255, 255, 255, 0.07);
+  --hairline-strong: rgba(255, 255, 255, 0.13);
+  --accent: #7c5cff;
+  --accent-bg: rgba(124, 92, 255, 0.14);
+  --accent-border: rgba(124, 92, 255, 0.42);
+  --green: #22c55e;
+  --green-bg: rgba(34, 197, 94, 0.14);
+  --amber: #f59e0b;
+  --amber-bg: rgba(245, 158, 11, 0.14);
+  --red: #ef4444;
+  --red-bg: rgba(239, 68, 68, 0.14);
+  --text: #eef2f6;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Cascadia Code', 'Consolas', monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: var(--font-sans);
+  background: var(--bg-app);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.layout {
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 248px 1fr;
+}
+
+/* Sidebar */
+.sidebar {
+  background: var(--bg-side);
+  border-right: 1px solid var(--hairline);
+  padding: 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px;
+}
+
+.brand-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #c4b5fd;
+}
+
+.brand-name { font-size: 14px; font-weight: 600; letter-spacing: -0.2px; }
+
+.rec-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rec-badge.on {
+  background: var(--red-bg);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  display: inline-block;
+  flex-shrink: 0;
+  animation: pulse 1.6s infinite;
+}
+
+.pulse-dot.red { background: var(--red); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+
+.quick-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.quick-actions .btn-wide {
+  grid-column: 1 / -1;
+}
+
+.mode-box {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--bg-surface);
+  border: 1px solid var(--hairline);
+}
+
+.mode-box select {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--bg-input);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.mode-box select:focus { outline: none; border-color: var(--accent); }
+
+.mode-hint {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  line-height: 1.3;
+}
+
+.side-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-height: 0;
+}
+
+.side-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 2px 8px 4px 8px;
+}
+
+.channel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+}
+
+.side-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.side-item:hover { background: rgba(255, 255, 255, 0.04); color: var(--text); }
+.side-item.active {
+  background: rgba(255, 255, 255, 0.065);
+  border-color: var(--hairline-strong);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ch-left {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+}
+
+.ch-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ch-right {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.plat-tag {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+.plat-twitch { background: rgba(145, 70, 255, 0.22); color: #d8b4fe; }
+.plat-youtube { background: rgba(239, 68, 68, 0.20); color: #fca5a5; }
+.plat-outro { background: rgba(148, 163, 184, 0.16); color: #cbd5e1; }
+
+.queue-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--amber-bg);
+  color: #fcd34d;
+}
+
+.err-pill {
+  font-size: 10px;
+  font-weight: 800;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--red-bg);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.channel-error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  background: var(--red-bg);
+  border: 1px solid rgba(239, 68, 68, 0.42);
+  color: #fecaca;
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+
+.marker-live-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(124, 92, 255, 0.14), rgba(59, 130, 246, 0.10));
+  border: 1px solid rgba(124, 92, 255, 0.38);
+  flex-wrap: wrap;
+}
+
+.marker-live-bar input {
+  flex: 1;
+  min-width: 190px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--bg-input);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+}
+.marker-live-bar input:focus { outline: none; border-color: var(--accent); }
+
+.marker-live-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.manual-marker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.manual-marker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 11px;
+  border-radius: 7px;
+  background: var(--bg-input);
+  border: 1px solid var(--hairline);
+  font-size: 12px;
+}
+
+.side-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 7px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--bg-surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: var(--bg-surface-hover); border-color: rgba(255,255,255,0.22); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-sm { height: 28px; padding: 0 10px; font-size: 11.5px; }
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) { background: #6d4aff; border-color: #6d4aff; }
+
+.btn-green {
+  background: rgba(34, 197, 94, 0.16);
+  border-color: rgba(34, 197, 94, 0.42);
+  color: #86efac;
+  font-weight: 600;
+}
+.btn-green:hover:not(:disabled) { background: rgba(34, 197, 94, 0.25); }
+
+.btn-red {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.42);
+  color: #fca5a5;
+  font-weight: 600;
+}
+.btn-red:hover:not(:disabled) { background: rgba(239, 68, 68, 0.25); }
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+.btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.05); color: var(--text); }
+
+/* Main */
+.main {
+  padding: 24px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.job-banner {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 9px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  font-size: 12.5px;
+}
+.job-banner.visible { display: flex; }
+.job-banner.error {
+  background: var(--red-bg);
+  border-color: rgba(239, 68, 68, 0.42);
+  color: #fecaca;
+}
+
+.channel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.channel-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.channel-title-row h1 {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.3px;
+}
+
+.status-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.status-chip.rec { background: var(--green-bg); color: #86efac; border: 1px solid rgba(34,197,94,0.35); }
+.status-chip.warn { background: var(--amber-bg); color: #fcd34d; }
+
+.channel-sub {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.channel-url {
+  max-width: 440px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.switch-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: var(--bg-surface);
+  border: 1px solid var(--hairline);
+}
+.switch-wrap input { accent-color: var(--accent); cursor: pointer; }
+
+/* Funnel cards */
+.funnel-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
+  gap: 10px;
+}
+@media (max-width: 1050px) {
+  .funnel-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+.funnel-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 12px 13px;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font-family: inherit;
+  transition: border-color 0.14s, background 0.14s, transform 0.1s;
+}
+.funnel-card:hover {
+  border-color: var(--hairline-strong);
+  background: var(--bg-surface-hover);
+  transform: translateY(-1px);
+}
+.funnel-card.highlight { border-color: rgba(245, 158, 11, 0.38); }
+.funnel-card.ready { border-color: rgba(34, 197, 94, 0.35); }
+
+.funnel-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.funnel-value {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+}
+.funnel-hint {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+/* Tabs */
+.tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--hairline);
+  padding-bottom: 8px;
+}
+
+.tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  padding: 6px 12px;
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.tab-btn:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.tab-btn.active {
+  background: var(--bg-surface);
+  border-color: var(--hairline-strong);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tab-panel { display: none; flex-direction: column; gap: 16px; min-height: 0; }
+.tab-panel.active { display: flex; }
+
+.section-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.section-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.section-sub { font-size: 11.5px; color: var(--text-dim); }
+
+.lote-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--hairline);
+  flex-wrap: wrap;
+}
+
+.lote-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.lote-id { font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; color: var(--text); }
+.lote-meta { font-size: 11.5px; color: var(--text-muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.lote-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+
+.badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 5px;
+}
+.badge-green { background: var(--green-bg); color: #86efac; }
+.badge-amber { background: var(--amber-bg); color: #fcd34d; }
+.badge-purple { background: var(--accent-bg); color: #c4b5fd; }
+.badge-dim { background: rgba(148, 163, 184, 0.14); color: var(--text-dim); }
+
+details.resumo-box {
+  margin-top: 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 8px 12px;
+}
+details.resumo-box summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+details.resumo-box pre {
+  margin-top: 8px;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #cbd5e1;
+}
+
+.fila-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px;
+}
+.fila-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--hairline);
+  font-size: 11.5px;
+}
+.fila-item span:first-child {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 8px;
+}
+.fila-item span:last-child { color: var(--text-dim); flex-shrink: 0; }
+
+/* Estado editor */
+.estado-editor {
+  width: 100%;
+  min-height: 310px;
+  resize: vertical;
+  background: var(--bg-input);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.estado-editor:focus { outline: none; border-color: var(--accent); }
+
+/* Live log console */
+.log-console {
+  background: var(--bg-input);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 12px;
+  height: 340px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #cbd5e1;
+}
+.log-line { display: flex; gap: 8px; }
+.log-ts { color: var(--text-dim); flex-shrink: 0; }
+.log-src { color: #a78bfa; font-weight: 600; flex-shrink: 0; }
+.log-txt { word-break: break-word; }
+
+.empty-state {
+  padding: 28px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
+/* Modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 7, 11, 0.72);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 16px;
+}
+.modal-backdrop.open { display: flex; }
+
+.modal {
+  width: 100%;
+  max-width: 480px;
+  background: var(--bg-surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.modal h2 { font-size: 16px; font-weight: 600; }
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.form-full { grid-column: 1 / -1; }
+
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label { font-size: 11.5px; color: var(--text-muted); font-weight: 500; }
+.field input, .field select {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--bg-input);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+}
+.field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 6px;
+}
+.modal-footer-right { display: flex; gap: 8px; }
+
+.toast {
+  position: fixed;
+  right: 22px;
+  bottom: 20px;
+  background: #1e293b;
+  border: 1px solid var(--hairline-strong);
+  color: var(--text);
+  padding: 9px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 0.16s, transform 0.16s;
+  z-index: 80;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-left">
+        <div class="brand-mark">SC</div>
+        <span class="brand-name">Stream-clipping</span>
+      </div>
+      <span id="recBadge" class="rec-badge">IDLE</span>
+    </div>
+
+    <div class="quick-actions">
+      <button id="btnStartAll" class="btn btn-green btn-sm" title="Inicia todos os canais ativos em canais.json">&#9654; Gravar ativos</button>
+      <button id="btnStopAll" class="btn btn-red btn-sm" title="Para todos os gravadores com segurança">&#9632; Parar todos</button>
+      <button id="btnNewChannel" class="btn btn-primary btn-sm btn-wide">+ Novo canal</button>
+    </div>
+
+    <div class="mode-box">
+      <label class="side-label" style="padding:0;" for="modoTranscricaoSelect">Transcrição (Whisper)</label>
+      <select id="modoTranscricaoSelect">
+        <option value="manual">Manual (só quando eu pedir)</option>
+        <option value="automatico">Automático (a cada bloco de 10m)</option>
+      </select>
+      <div id="modoTranscricaoHint" class="mode-hint">GPU livre durante a gravação</div>
+    </div>
+
+    <div class="side-section">
+      <div class="side-label">Canais</div>
+      <div id="channelList" class="channel-list"></div>
+    </div>
+
+    <div class="side-footer">
+      <button id="btnOpenProject" class="btn btn-sm">&#128194; Abrir pasta do projeto</button>
+      <button id="btnShutdown" class="btn btn-ghost btn-sm">Encerrar servidor</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div id="jobBanner" class="job-banner">
+      <div id="jobBannerText">Processando...</div>
+      <button id="btnDismissError" class="btn btn-sm" style="display:none">Fechar</button>
+    </div>
+
+    <div id="mainContent"></div>
+  </main>
+</div>
+
+<!-- Modal Novo / Editar Canal -->
+<div id="channelModal" class="modal-backdrop">
+  <div class="modal">
+    <h2 id="modalTitle">Novo canal</h2>
+    <div class="form-grid">
+      <div class="field form-full">
+        <label for="fNome">Nome do canal (pasta em canais/)</label>
+        <input id="fNome" type="text" placeholder="ex: alanzoka ou canal_youtube">
+      </div>
+      <div class="field form-full">
+        <label for="fUrl">URL da live (Twitch ou YouTube)</label>
+        <input id="fUrl" type="text" placeholder="https://www.twitch.tv/canal ou https://www.youtube.com/@canal/live">
+      </div>
+      <div class="field">
+        <label for="fMinutos">Bloco (minutos)</label>
+        <input id="fMinutos" type="number" min="1" max="120" value="10">
+      </div>
+      <div class="field">
+        <label for="fQualidade">Qualidade</label>
+        <select id="fQualidade">
+          <option value="best">best (máxima)</option>
+          <option value="1080p60">1080p60</option>
+          <option value="720p60">720p60</option>
+          <option value="480p">480p</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="fMotor">Motor de captura</label>
+        <select id="fMotor">
+          <option value="auto">auto (recomendado)</option>
+          <option value="streamlink">streamlink</option>
+          <option value="yt-dlp">yt-dlp</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="fCookies">Cookies .txt (YouTube se pedir login/anti-bot)</label>
+        <input id="fCookies" type="text" placeholder="Caminho para cookies.txt (opcional)">
+      </div>
+      <div class="field form-full">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);">
+          <input id="fAtivo" type="checkbox" checked style="width:auto;height:auto;accent-color:var(--accent);">
+          Ativo para "Gravar ativos" (canais.json)
+        </label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="btnDeleteChannel" class="btn btn-red btn-sm" style="display:none">Remover do canais.json</button>
+      <div class="modal-footer-right" style="margin-left:auto">
+        <button id="btnCancelModal" class="btn btn-sm">Cancelar</button>
+        <button id="btnSaveChannel" class="btn btn-primary btn-sm">Salvar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const state = {
+  data: null,
+  selectedChannel: null,
+  activeTab: 'lotes',
+  detailsCache: {},
+  estadoDirty: false,
+  editingOriginalName: null,
+  dismissedError: false,
+  markerDraftNote: '',
+};
+
+function formatMmSs(sec) {
+  const total = Math.max(0, Math.round(Number(sec) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || `Erro HTTP ${res.status}`);
+  }
+  return data;
+}
+
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function platInfo(plat) {
+  if (plat === 'twitch') return { label: 'Twitch', cls: 'plat-twitch' };
+  if (plat === 'youtube') return { label: 'YT', cls: 'plat-youtube' };
+  return { label: 'Live', cls: 'plat-outro' };
+}
+
+function getSelectedChannelObj() {
+  const canais = state.data?.canais || [];
+  return canais.find(c => c.nome === state.selectedChannel) || null;
+}
+
+async function loadDetails(channelName, forceEstadoOverwrite = false) {
+  if (!channelName) return;
+  try {
+    const det = await api(`/api/channel/details?channel=${encodeURIComponent(channelName)}`);
+    state.detailsCache[channelName] = det;
+    if (channelName === state.selectedChannel) {
+      renderDetailsAreas(det, forceEstadoOverwrite);
+    }
+  } catch (_) {}
+}
+
+function renderSidebar() {
+  const data = state.data;
+  if (!data) return;
+
+  const recCount = data.recording_active_count || 0;
+  const badge = document.getElementById('recBadge');
+  if (recCount > 0) {
+    badge.className = 'rec-badge on';
+    badge.innerHTML = `<span class="pulse-dot red"></span>REC ${recCount}`;
+  } else {
+    badge.className = 'rec-badge';
+    badge.textContent = 'IDLE';
+  }
+
+  const modo = (data.padroes?.modo_transcricao || 'manual').toLowerCase();
+  const sel = document.getElementById('modoTranscricaoSelect');
+  const hint = document.getElementById('modoTranscricaoHint');
+  if (sel && document.activeElement !== sel && sel.value !== modo) {
+    sel.value = modo;
+  }
+  if (hint) {
+    hint.textContent = modo === 'automatico'
+      ? 'Pré-transcreve cada bloco ao fechar'
+      : 'GPU livre durante a gravação';
+  }
+
+  const listEl = document.getElementById('channelList');
+  listEl.innerHTML = '';
+  for (const ch of data.canais) {
+    const btn = document.createElement('button');
+    btn.className = 'side-item' + (ch.nome === state.selectedChannel ? ' active' : '');
+    const plat = platInfo(ch.plataforma);
+    const fila = ch.counts['02_para_processar'] || 0;
+
+    btn.innerHTML = `
+      <span class="ch-left">
+        ${ch.recording ? '<span class="pulse-dot" title="Gravando"></span>' : ''}
+        <span class="ch-name" title="${escapeHtml(ch.nome)}">${escapeHtml(ch.nome)}</span>
+      </span>
+      <span class="ch-right">
+        ${(!ch.recording && ch.last_error) ? `<span class="err-pill" title="${escapeHtml(ch.last_error)}">!</span>` : ''}
+        ${fila > 0 ? `<span class="queue-pill" title="Blocos na fila">${fila}</span>` : ''}
+        <span class="plat-tag ${plat.cls}">${plat.label}</span>
+      </span>
+    `;
+    btn.onclick = () => {
+      state.selectedChannel = ch.nome;
+      state.estadoDirty = false;
+      renderAll();
+      loadDetails(ch.nome, true);
+    };
+    listEl.appendChild(btn);
+  }
+}
+
+function renderJobBanner() {
+  const job = state.data?.job;
+  const banner = document.getElementById('jobBanner');
+  const textEl = document.getElementById('jobBannerText');
+  const dismissBtn = document.getElementById('btnDismissError');
+
+  if (!job) {
+    banner.className = 'job-banner';
+    return;
+  }
+  if (job.running) {
+    state.dismissedError = false;
+    banner.className = 'job-banner visible';
+    dismissBtn.style.display = 'none';
+    textEl.textContent = `⏳ [${job.kind}] (${job.channel}) — ${job.last_message || 'Em execução...'}`;
+    return;
+  }
+  if (job.last_error && !state.dismissedError) {
+    banner.className = 'job-banner visible error';
+    dismissBtn.style.display = 'inline-flex';
+    textEl.textContent = `❌ Erro em [${job.kind}] (${job.channel}): ${job.last_error}`;
+    return;
+  }
+  banner.className = 'job-banner';
+}
+
+function renderLogs() {
+  const consoleEl = document.getElementById('logConsole');
+  if (!consoleEl) return;
+  const atBottom = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight < 40;
+  const logs = state.data?.logs || [];
+  if (!logs.length) {
+    consoleEl.innerHTML = '<div style="color:var(--text-dim)">Nenhum log nesta sessão ainda.</div>';
+    return;
+  }
+  consoleEl.innerHTML = logs.map(l => `
+    <div class="log-line">
+      <span class="log-ts">[${escapeHtml(l.ts)}]</span>
+      <span class="log-src">[${escapeHtml(l.source)}]</span>
+      <span class="log-txt">${escapeHtml(l.text)}</span>
+    </div>
+  `).join('');
+  if (atBottom) {
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+}
+
+function renderDetailsAreas(det, forceEstadoOverwrite = false) {
+  const editor = document.getElementById('estadoEditor');
+  if (editor && (!state.estadoDirty || forceEstadoOverwrite)) {
+    editor.value = det.estado_live || '';
+    state.estadoDirty = false;
+  }
+
+  const filaBox = document.getElementById('filaArquivosBox');
+  if (filaBox) {
+    const files = det.fila_arquivos || [];
+    if (!files.length) {
+      filaBox.innerHTML = '<div class="section-sub">Nenhum arquivo aguardando na fila (02_para_processar/).</div>';
+    } else {
+      filaBox.innerHTML = `<div class="fila-list">${files.map(f => `
+        <div class="fila-item">
+          <span title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;flex-shrink:0;">
+            <span>${f.size_mb} MB</span>
+            ${f.pre_transcribed
+              ? '<span class="badge badge-green">&#10003; Transcrito</span>'
+              : '<span class="badge badge-dim">Sem transcrição</span>'}
+          </span>
+        </div>
+      `).join('')}</div>`;
+    }
+  }
+
+  for (const res of (det.resumos || [])) {
+    const pre = document.getElementById(`resumoPre_${res.lote_id}`);
+    if (pre) pre.textContent = res.content;
+  }
+}
+
+function renderMain() {
+  const mainEl = document.getElementById('mainContent');
+  const ch = getSelectedChannelObj();
+
+  if (!ch) {
+    mainEl.innerHTML = `
+      <div class="section-card" style="margin-top:20px;align-items:center;text-align:center;padding:40px 24px;">
+        <div style="font-size:16px;font-weight:600;">Nenhum canal selecionado</div>
+        <div class="section-sub">Cadastre seu primeiro canal da Twitch ou do YouTube para começar a gravar e gerar marcadores.</div>
+        <button class="btn btn-primary" onclick="openChannelModal(null)">+ Novo canal</button>
+      </div>
+    `;
+    return;
+  }
+
+  const isExample = (ch.url || '').toUpperCase().includes('EXEMPLO');
+  const jobRunning = Boolean(state.data?.job?.running);
+  const c = ch.counts || {};
+  const det = state.detailsCache[ch.nome];
+
+  let statusChipHtml = '<span class="status-chip">Pronto</span>';
+  if (ch.recording) {
+    statusChipHtml = `<span class="status-chip rec"><span class="pulse-dot"></span>GRAVANDO desde ${escapeHtml(ch.recording_since)}</span>`;
+  } else if (isExample) {
+    statusChipHtml = '<span class="status-chip warn">Canal de exemplo — edite com sua URL</span>';
+  }
+
+  const lotesProcHtml = (ch.lotes_em_processamento || []).length
+    ? ch.lotes_em_processamento.map(l => `
+      <div class="lote-row">
+        <div class="lote-info">
+          <span class="lote-id">${escapeHtml(l.lote_id)}</span>
+          <span class="lote-meta">
+            <span>${l.videos_count} bloco(s)</span>
+            ${l.has_decision
+              ? '<span class="badge badge-green">decisao_lote.json pronto</span>'
+              : '<span class="badge badge-amber">Aguardando análise da IA no chat</span>'}
+          </span>
+        </div>
+        <div class="lote-actions">
+          <button class="btn btn-sm" onclick="openSubdir('${escapeHtml(ch.nome)}','03_em_processamento/${escapeHtml(l.lote_id)}')">&#128194; Abrir lote</button>
+          ${l.has_decision
+            ? `<button class="btn btn-primary btn-sm" ${jobRunning ? 'disabled' : ''} onclick="finalizeLote('${escapeHtml(ch.nome)}','${escapeHtml(l.lote_id)}')">&#127916; Finalizar e Gerar XML</button>`
+            : `<button class="btn btn-sm" onclick="copyChatPrompt('${escapeHtml(ch.nome)}')">&#128203; Copiar prompt pro chat</button>`}
+        </div>
+      </div>
+    `).join('')
+    : '<div class="section-sub">Nenhum lote em análise em 03_em_processamento/.</div>';
+
+  const lotesEdicaoHtml = (ch.lotes_edicao || []).length
+    ? ch.lotes_edicao.map(l => {
+      const xmlText = l.xml_files.length ? l.xml_files.join(', ') : 'Sem XML';
+      return `
+        <div style="display:flex;flex-direction:column;gap:4px;">
+          <div class="lote-row">
+            <div class="lote-info">
+              <span class="lote-id">${escapeHtml(l.lote_id)}</span>
+              <span class="lote-meta">
+                <span>${l.videos_count} bloco(s)</span>
+                <span class="badge badge-purple">${escapeHtml(xmlText)}</span>
+                ${l.cortes_count > 0 ? `<span class="badge badge-green">${l.cortes_count} corte(s) MP4</span>` : ''}
+              </span>
+            </div>
+            <div class="lote-actions">
+              <button class="btn btn-sm" onclick="openSubdir('${escapeHtml(ch.nome)}','04_para_edicao/${escapeHtml(l.lote_id)}')">&#128194; Abrir pasta</button>
+              <button class="btn btn-sm" ${jobRunning ? 'disabled' : ''} onclick="cutLote('${escapeHtml(ch.nome)}','${escapeHtml(l.lote_id)}')">&#9986; Cortar MP4s</button>
+            </div>
+          </div>
+          ${l.resumo_exists ? `
+            <details class="resumo-box">
+              <summary>Ver resumo_lote.md (marcadores e descartes)</summary>
+              <pre id="resumoPre_${escapeHtml(l.lote_id)}">Carregando...</pre>
+            </details>
+          ` : ''}
+        </div>
+      `;
+    }).join('')
+    : '<div class="section-sub">Nenhum lote finalizado em 04_para_edicao/ ainda.</div>';
+
+  mainEl.innerHTML = `
+    <div class="channel-header">
+      <div>
+        <div class="channel-title-row">
+          <h1>${escapeHtml(ch.nome)}</h1>
+          ${statusChipHtml}
+        </div>
+        <div class="channel-sub">
+          <span class="channel-url" title="${escapeHtml(ch.url)}">${escapeHtml(ch.url || 'Sem URL cadastrada (pasta manual)')}</span>
+          <span>&bull; ${ch.duracao_bloco_minutos} min/bloco &bull; ${escapeHtml(ch.qualidade)} &bull; ${escapeHtml(ch.motor)}</span>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        ${ch.in_config ? `
+          <label class="switch-wrap" title="Define se o canal inicia com 'Gravar ativos'">
+            <input type="checkbox" ${ch.ativo ? 'checked' : ''} onchange="toggleChannelActive('${escapeHtml(ch.nome)}', this.checked)">
+            Ativo
+          </label>
+        ` : ''}
+        <button class="btn btn-sm" onclick="openChannelModal('${escapeHtml(ch.nome)}')">Editar</button>
+        ${ch.recording
+          ? `<button class="btn btn-red btn-sm" onclick="stopChannel('${escapeHtml(ch.nome)}')">&#9632; Parar</button>`
+          : `<button class="btn btn-green btn-sm" ${(!ch.url || isExample) ? 'disabled' : ''} onclick="startChannel('${escapeHtml(ch.nome)}')">&#9679; Gravar</button>`}
+        <button class="btn btn-primary btn-sm" ${(jobRunning || (c['02_para_processar'] || 0) === 0) ? 'disabled' : ''} onclick="prepareChannel('${escapeHtml(ch.nome)}')">&#9889; Preparar Lote</button>
+        <button class="btn btn-sm" onclick="copyChatPrompt('${escapeHtml(ch.nome)}')">&#128203; Copiar prompt pro chat</button>
+      </div>
+    </div>
+
+    ${(!ch.recording && ch.last_error) ? `
+      <div class="channel-error-banner">
+        <span>&#9888; <strong>Gravação pausada:</strong> ${escapeHtml(ch.last_error)}</span>
+        <button class="btn btn-sm" onclick="openChannelModal('${escapeHtml(ch.nome)}')">Editar canal (Cookies/Config)</button>
+      </div>
+    ` : ''}
+
+    ${ch.recording ? `
+      <div class="marker-live-bar">
+        <button id="btnAddMarker" class="btn btn-primary btn-sm" ${!ch.current_segment ? 'disabled' : ''} onclick="addManualMarker('${escapeHtml(ch.nome)}')">&#9733; Marcar ponto (M)</button>
+        <input id="inputMarkerNote" type="text" value="${escapeHtml(state.markerDraftNote)}" placeholder="Nota rápida opcional (Enter marca)..." oninput="state.markerDraftNote = this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();addManualMarker('${escapeHtml(ch.nome)}');}">
+        <span id="markerPosLabel" class="marker-live-meta">${ch.current_segment ? `Bloco atual: ${formatMmSs(ch.current_segment.segundo)}` : 'Conectando...'}</span>
+        <span id="markerCountLabel" class="badge badge-purple">${(ch.manual_markers || []).length} ponto(s)</span>
+      </div>
+    ` : ''}
+
+    <div class="funnel-grid">
+      <button class="funnel-card" onclick="openSubdir('${escapeHtml(ch.nome)}','01_gravando')">
+        <div class="funnel-label"><span>01 Gravando</span><span>&#128194;</span></div>
+        <div class="funnel-value">${c['01_gravando'] || 0}</div>
+        <div class="funnel-hint">Em captura</div>
+      </button>
+      <button class="funnel-card ${(c['02_para_processar'] || 0) > 0 ? 'highlight' : ''}" onclick="openSubdir('${escapeHtml(ch.nome)}','02_para_processar')">
+        <div class="funnel-label"><span>02 Fila</span><span>&#128194;</span></div>
+        <div class="funnel-value">${c['02_para_processar'] || 0}</div>
+        <div class="funnel-hint">${((c['02_para_processar'] || 0) > 0 && (ch.pre_transcribed_count || 0) > 0) ? `${ch.pre_transcribed_count}/${c['02_para_processar']} transcrito(s)` : 'Blocos prontos'}</div>
+      </button>
+      <button class="funnel-card" onclick="openSubdir('${escapeHtml(ch.nome)}','03_em_processamento')">
+        <div class="funnel-label"><span>03 Em Análise</span><span>&#128194;</span></div>
+        <div class="funnel-value">${c['03_em_processamento'] || 0}</div>
+        <div class="funnel-hint">Lotes abertos</div>
+      </button>
+      <button class="funnel-card ${(c['04_para_edicao'] || 0) > 0 ? 'ready' : ''}" onclick="openSubdir('${escapeHtml(ch.nome)}','04_para_edicao')">
+        <div class="funnel-label"><span>04 Edição/XML</span><span>&#128194;</span></div>
+        <div class="funnel-value">${c['04_para_edicao'] || 0}</div>
+        <div class="funnel-hint">Lotes p/ Premiere</div>
+      </button>
+      <button class="funnel-card" onclick="openSubdir('${escapeHtml(ch.nome)}','05_cortes_extraidos')">
+        <div class="funnel-label"><span>05 Cortes</span><span>&#128194;</span></div>
+        <div class="funnel-value">${c['05_cortes_extraidos'] || 0}</div>
+        <div class="funnel-hint">MP4s extraídos</div>
+      </button>
+      <button class="funnel-card" onclick="openSubdir('${escapeHtml(ch.nome)}','06_arquivo_descartados')">
+        <div class="funnel-label"><span>06 Descartados</span><span>&#128194;</span></div>
+        <div class="funnel-value">${c['06_arquivo_descartados'] || 0}</div>
+        <div class="funnel-hint">Arquivo morto</div>
+      </button>
+    </div>
+
+    <div class="tabs-bar">
+      <button class="tab-btn ${state.activeTab === 'lotes' ? 'active' : ''}" onclick="switchTab('lotes')">Lotes &amp; Premiere (XML)</button>
+      <button class="tab-btn ${state.activeTab === 'estado' ? 'active' : ''}" onclick="switchTab('estado')">Estado da Live (estado_live.md)</button>
+      <button class="tab-btn ${state.activeTab === 'logs' ? 'active' : ''}" onclick="switchTab('logs')">Log ao Vivo</button>
+    </div>
+
+    <div id="tab-lotes" class="tab-panel ${state.activeTab === 'lotes' ? 'active' : ''}">
+      ${(ch.manual_markers || []).length ? `
+        <div class="section-card">
+          <div class="section-head">
+            <span class="section-title">&#9733; Pontos marcados ao vivo (aguardando lote)</span>
+            <span class="section-sub">Entram como marcadores azuis no XML e têm prioridade para a IA</span>
+          </div>
+          <div class="manual-marker-list">
+            ${ch.manual_markers.map(m => `
+              <div class="manual-marker-row">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap;">
+                  <span class="badge badge-purple">${formatMmSs(m.segundo)}</span>
+                  <span style="font-family:var(--font-mono);color:var(--text-muted);font-size:11.5px;">${escapeHtml(m.arquivo)}</span>
+                  <span>${escapeHtml(m.nota || '(sem nota)')}</span>
+                </div>
+                <button class="btn btn-ghost btn-sm" title="Remover marcador" onclick="deleteManualMarker('${escapeHtml(ch.nome)}','${escapeHtml(m.id)}')">&times;</button>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <div class="section-card">
+        <div class="section-head">
+          <span class="section-title">Em análise (03_em_processamento)</span>
+          <span class="section-sub">Depois de preparar o lote, peça no chat para a IA criar o decisao_lote.json</span>
+        </div>
+        ${lotesProcHtml}
+      </div>
+
+      <div class="section-card">
+        <div class="section-head">
+          <span class="section-title">Prontos para o Premiere (04_para_edicao)</span>
+          <span class="section-sub">Importe o .xml no Premiere com File &gt; Import</span>
+        </div>
+        ${lotesEdicaoHtml}
+      </div>
+
+      <div class="section-card">
+        <div class="section-head">
+          <span class="section-title">Blocos na fila (02_para_processar)</span>
+          <button class="btn btn-sm" onclick="loadDetails('${escapeHtml(ch.nome)}')">Atualizar fila</button>
+        </div>
+        <div id="filaArquivosBox"><div class="section-sub">Carregando...</div></div>
+      </div>
+    </div>
+
+    <div id="tab-estado" class="tab-panel ${state.activeTab === 'estado' ? 'active' : ''}">
+      <div class="section-card">
+        <div class="section-head">
+          <div>
+            <div class="section-title">Diário vivo da live (estado_live.md)</div>
+            <div class="section-sub">Contexto lido pela IA para entender missões, desafios e piadas entre rodadas</div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm" onclick="loadDetails('${escapeHtml(ch.nome)}', true)">Recarregar</button>
+            <button class="btn btn-primary btn-sm" onclick="saveEstado('${escapeHtml(ch.nome)}')">&#128190; Salvar estado</button>
+          </div>
+        </div>
+        <textarea id="estadoEditor" class="estado-editor" oninput="state.estadoDirty = true"></textarea>
+      </div>
+    </div>
+
+    <div id="tab-logs" class="tab-panel ${state.activeTab === 'logs' ? 'active' : ''}">
+      <div class="section-card">
+        <div class="section-head">
+          <span class="section-title">Console em tempo real (gravadores, Whisper e XML)</span>
+          <button class="btn btn-sm" onclick="clearLogs()">Limpar tela</button>
+        </div>
+        <div id="logConsole" class="log-console"></div>
+      </div>
+    </div>
+  `;
+
+  if (det) {
+    renderDetailsAreas(det, false);
+  } else {
+    loadDetails(ch.nome, true);
+  }
+  renderLogs();
+}
+
+function renderAll() {
+  renderSidebar();
+  renderJobBanner();
+  renderMain();
+}
+
+function switchTab(tab) {
+  state.activeTab = tab;
+  renderMain();
+}
+
+async function refreshState() {
+  try {
+    const prevSelected = state.selectedChannel;
+    const prevLogsLen = state.data?.logs?.length || 0;
+    const prevJobRunning = Boolean(state.data?.job?.running);
+    const data = await api('/api/state');
+    state.data = data;
+
+    if (!state.selectedChannel && data.canais.length) {
+      const real = data.canais.find(c => !(c.url || '').toUpperCase().includes('EXEMPLO'));
+      state.selectedChannel = (real || data.canais[0]).nome;
+    } else if (state.selectedChannel && !data.canais.some(c => c.nome === state.selectedChannel)) {
+      state.selectedChannel = data.canais[0]?.nome || null;
+    }
+
+    // Recarrega detalhes quando um job termina ou canal muda
+    if (prevSelected !== state.selectedChannel || (prevJobRunning && !data.job.running)) {
+      if (state.selectedChannel) loadDetails(state.selectedChannel, false);
+    }
+
+    // Evita destruir o textarea ou fechar <details> se o usuário está na aba estado/logs sem mudança estrutural
+    renderSidebar();
+    renderJobBanner();
+
+    if (state.activeTab === 'logs' && document.getElementById('logConsole')) {
+      if (data.logs.length !== prevLogsLen) renderLogs();
+    } else if (document.activeElement && document.activeElement.id === 'inputMarkerNote') {
+      const ch = getSelectedChannelObj();
+      const posEl = document.getElementById('markerPosLabel');
+      const cntEl = document.getElementById('markerCountLabel');
+      const addBtn = document.getElementById('btnAddMarker');
+      if (ch && posEl) {
+        posEl.textContent = ch.current_segment ? `Bloco atual: ${formatMmSs(ch.current_segment.segundo)}` : 'Conectando...';
+      }
+      if (ch && cntEl) {
+        cntEl.textContent = `${(ch.manual_markers || []).length} ponto(s)`;
+      }
+      if (ch && addBtn) {
+        addBtn.disabled = !ch.current_segment;
+      }
+    } else if (state.activeTab !== 'estado' || !document.getElementById('estadoEditor')) {
+      const openDetails = new Set(
+        Array.from(document.querySelectorAll('details.resumo-box[open] pre'))
+          .map(el => el.id)
+      );
+      renderMain();
+      for (const id of openDetails) {
+        const pre = document.getElementById(id);
+        if (pre && pre.parentElement) pre.parentElement.open = true;
+      }
+    }
+  } catch (_) {}
+}
+
+async function startChannel(name) {
+  try {
+    await api('/api/record/start', { method: 'POST', body: JSON.stringify({ channel: name }) });
+    showToast(`Gravação iniciada: ${name}`);
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+}
+
+async function stopChannel(name) {
+  try {
+    await api('/api/record/stop', { method: 'POST', body: JSON.stringify({ channel: name }) });
+    showToast(`Gravação parada: ${name}`);
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+}
+
+async function toggleChannelActive(name, ativo) {
+  const ch = (state.data?.canais || []).find(c => c.nome === name);
+  if (!ch) return;
+  try {
+    await api('/api/channels/save', {
+      method: 'POST',
+      body: JSON.stringify({
+        original_name: ch.nome,
+        channel: {
+          nome: ch.nome,
+          url: ch.url,
+          ativo,
+          duracao_bloco_minutos: ch.duracao_bloco_minutos,
+          qualidade: ch.qualidade,
+          motor: ch.motor,
+          cookies: ch.cookies,
+        },
+      }),
+    });
+    showToast(ativo ? `${name} ativado` : `${name} desativado`);
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+}
+
+async function prepareChannel(name) {
+  try {
+    await api('/api/prepare', { method: 'POST', body: JSON.stringify({ channel: name }) });
+    state.activeTab = 'logs';
+    showToast(`Preparando lote de ${name}...`);
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+}
+
+async function finalizeLote(name, loteId) {
+  try {
+    await api('/api/finalize', { method: 'POST', body: JSON.stringify({ channel: name, lote: loteId }) });
+    showToast(`Finalizando ${loteId}...`);
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+}
+
+async function cutLote(name, loteId) {
+  try {
+    await api('/api/cut', { method: 'POST', body: JSON.stringify({ channel: name, lote: loteId, folga: 2.0 }) });
+    state.activeTab = 'logs';
+    showToast(`Extraindo cortes MP4 de ${loteId}...`);
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+}
+
+async function saveEstado(name) {
+  const editor = document.getElementById('estadoEditor');
+  if (!editor) return;
+  try {
+    await api('/api/channel/estado', {
+      method: 'POST',
+      body: JSON.stringify({ channel: name, content: editor.value }),
+    });
+    state.estadoDirty = false;
+    showToast('estado_live.md salvo!');
+  } catch (err) { showToast(err.message); }
+}
+
+async function openSubdir(channel, subdir) {
+  try {
+    await api('/api/open-folder', { method: 'POST', body: JSON.stringify({ channel, subdir }) });
+  } catch (err) { showToast(err.message); }
+}
+
+async function clearLogs() {
+  try {
+    await api('/api/logs/clear', { method: 'POST', body: '{}' });
+    await refreshState();
+  } catch (_) {}
+}
+
+async function copyChatPrompt(channelName) {
+  const root = state.data?.project_root || 'E:\\Antigravity\\Stream-clipping';
+  const prompt = `Processa o que temos do canal "${channelName}" em ${root} seguindo o protocolo do AGENTS.md.`;
+  try {
+    await navigator.clipboard.writeText(prompt);
+    showToast('Prompt copiado! Cole no chat do Antigravity.');
+  } catch (_) {
+    window.prompt('Copie o comando abaixo para colar no chat:', prompt);
+  }
+}
+
+function openChannelModal(channelName) {
+  const modal = document.getElementById('channelModal');
+  const title = document.getElementById('modalTitle');
+  const delBtn = document.getElementById('btnDeleteChannel');
+  const padroes = state.data?.padroes || {};
+
+  if (channelName) {
+    const ch = (state.data?.canais || []).find(c => c.nome === channelName);
+    state.editingOriginalName = ch.nome;
+    title.textContent = `Editar canal: ${ch.nome}`;
+    document.getElementById('fNome').value = ch.nome;
+    document.getElementById('fUrl').value = (ch.url || '').includes('EXEMPLO') ? '' : (ch.url || '');
+    document.getElementById('fMinutos').value = ch.duracao_bloco_minutos || 10;
+    document.getElementById('fQualidade').value = ch.qualidade || 'best';
+    document.getElementById('fMotor').value = ch.motor || 'auto';
+    document.getElementById('fCookies').value = ch.cookies || '';
+    document.getElementById('fAtivo').checked = Boolean(ch.ativo);
+    delBtn.style.display = ch.in_config ? 'inline-flex' : 'none';
+  } else {
+    state.editingOriginalName = null;
+    title.textContent = 'Novo canal';
+    document.getElementById('fNome').value = '';
+    document.getElementById('fUrl').value = '';
+    document.getElementById('fMinutos').value = padroes.duracao_bloco_minutos || 10;
+    document.getElementById('fQualidade').value = padroes.qualidade || 'best';
+    document.getElementById('fMotor').value = 'auto';
+    document.getElementById('fCookies').value = '';
+    document.getElementById('fAtivo').checked = true;
+    delBtn.style.display = 'none';
+  }
+
+  modal.classList.add('open');
+}
+
+function closeChannelModal() {
+  document.getElementById('channelModal').classList.remove('open');
+}
+
+document.getElementById('btnNewChannel').onclick = () => openChannelModal(null);
+document.getElementById('btnCancelModal').onclick = closeChannelModal;
+document.getElementById('channelModal').onclick = (e) => {
+  if (e.target.id === 'channelModal') closeChannelModal();
+};
+
+document.getElementById('btnSaveChannel').onclick = async () => {
+  const payload = {
+    original_name: state.editingOriginalName,
+    channel: {
+      nome: document.getElementById('fNome').value.trim(),
+      url: document.getElementById('fUrl').value.trim(),
+      duracao_bloco_minutos: Number(document.getElementById('fMinutos').value || 10),
+      qualidade: document.getElementById('fQualidade').value,
+      motor: document.getElementById('fMotor').value,
+      cookies: document.getElementById('fCookies').value.trim(),
+      ativo: document.getElementById('fAtivo').checked,
+    },
+  };
+  if (!payload.channel.nome || !payload.channel.url) {
+    showToast('Preencha o nome e a URL da live.');
+    return;
+  }
+  try {
+    await api('/api/channels/save', { method: 'POST', body: JSON.stringify(payload) });
+    closeChannelModal();
+    state.selectedChannel = payload.channel.nome;
+    showToast('Canal salvo!');
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+};
+
+document.getElementById('btnDeleteChannel').onclick = async () => {
+  const nome = state.editingOriginalName;
+  if (!nome) return;
+  if (!confirm(`Remover "${nome}" de canais.json?\n\nOs vídeos já gravados em canais/${nome}/ NÃO serão apagados.`)) return;
+  try {
+    await api('/api/channels/delete', { method: 'POST', body: JSON.stringify({ channel: nome }) });
+    closeChannelModal();
+    showToast(`Canal ${nome} removido do canais.json`);
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+};
+
+document.getElementById('btnStartAll').onclick = async () => {
+  try {
+    const res = await api('/api/record/start', { method: 'POST', body: JSON.stringify({ all: true }) });
+    showToast(`${res.started} canal(is) gravando!`);
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+};
+
+document.getElementById('btnStopAll').onclick = async () => {
+  try {
+    const res = await api('/api/record/stop', { method: 'POST', body: JSON.stringify({ all: true }) });
+    showToast(`${res.stopped} gravador(es) parado(s).`);
+    await refreshState();
+  } catch (err) { showToast(err.message); }
+};
+
+document.getElementById('modoTranscricaoSelect').onchange = async (e) => {
+  const modo = e.target.value;
+  try {
+    await api('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify({ modo_transcricao: modo }),
+    });
+    showToast(
+      modo === 'automatico'
+        ? 'Modo automático ativado: pré-transcrevendo cada bloco que fechar.'
+        : 'Modo manual ativado: Whisper roda só quando você pedir.'
+    );
+    await refreshState();
+  } catch (err) {
+    showToast(err.message);
+    await refreshState();
+  }
+};
+
+document.getElementById('btnOpenProject').onclick = async () => {
+  try {
+    await api('/api/open-folder', { method: 'POST', body: '{}' });
+  } catch (err) { showToast(err.message); }
+};
+
+document.getElementById('btnDismissError').onclick = () => {
+  state.dismissedError = true;
+  renderJobBanner();
+};
+
+document.getElementById('btnShutdown').onclick = async () => {
+  if (!confirm('Encerrar o servidor do Stream-clipping App?\n\nQualquer gravação em andamento será fechada com segurança antes de sair.')) return;
+  try {
+    await api('/api/shutdown', { method: 'POST', body: '{}' });
+    document.body.innerHTML = '<div style="display:flex;height:100vh;align-items:center;justify-content:center;color:#94a3b8;font-family:sans-serif;">Servidor encerrado com segurança. Pode fechar esta janela.</div>';
+  } catch (_) {}
+};
+
+async function addManualMarker(name) {
+  const input = document.getElementById('inputMarkerNote');
+  const nota = (input ? input.value : state.markerDraftNote || '').trim();
+  try {
+    const res = await api('/api/markers/add', {
+      method: 'POST',
+      body: JSON.stringify({ channel: name, nota, retrocesso_seg: 0 }),
+    });
+    state.markerDraftNote = '';
+    if (input) input.value = '';
+    showToast(`★ Ponto marcado em ${formatMmSs(res.marker.segundo)}!`);
+    await refreshState();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+async function deleteManualMarker(name, id) {
+  try {
+    await api('/api/markers/delete', {
+      method: 'POST',
+      body: JSON.stringify({ channel: name, id }),
+    });
+    showToast('Marcador removido.');
+    await refreshState();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  if (e.key !== 'm' && e.key !== 'M') return;
+  const tag = (document.activeElement?.tagName || '').toUpperCase();
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (document.getElementById('channelModal').classList.contains('open')) return;
+  const ch = getSelectedChannelObj();
+  if (ch && ch.recording && ch.current_segment) {
+    e.preventDefault();
+    addManualMarker(ch.nome);
+  }
+});
+
+refreshState().then(() => {
+  renderAll();
+  setInterval(refreshState, 2000);
+});
+</script>
+</body>
+</html>
