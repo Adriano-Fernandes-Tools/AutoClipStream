@@ -810,6 +810,51 @@ details.resumo-box pre {
       <div id="modoTranscricaoHint" class="mode-hint">GPU livre durante a gravação</div>
     </div>
 
+    <div class="mode-box">
+      <label class="side-label" style="padding:0;" for="modoAnaliseSelect">Modo de Análise</label>
+      <select id="modoAnaliseSelect">
+        <option value="blocos">Em blocos (Manual)</option>
+        <option value="automatico">Automático (Corta ao vivo)</option>
+      </select>
+      <div id="modoAnaliseHint" class="mode-hint">Acumula lotes para você pedir a análise</div>
+    </div>
+
+    <div class="mode-box">
+      <label class="side-label" style="padding:0;" for="aiBackendSelect">Auxílio de IA</label>
+      <select id="aiBackendSelect">
+        <option value="desabilitado">Sem IA (Áudio + Palavras)</option>
+        <option value="local">Ollama Local (Gemma 3 4B)</option>
+        <option value="api">API Externa (OpenAI/Groq)</option>
+      </select>
+      <div id="aiBackendHint" class="mode-hint">Detecção leve sem consumo extra</div>
+      <div id="ollamaControlBox" style="display:none;margin-top:6px;padding-top:6px;border-top:1px dashed var(--hairline);">
+        <div id="ollamaStatusText" style="font-size:10.5px;color:var(--text-dim);margin-bottom:4px;">Verificando Ollama...</div>
+        <button id="btnPullGemma" class="btn btn-sm" style="width:100%;font-size:10.5px;padding:4px 6px;">Baixar Gemma 3 (4B)</button>
+        <button id="btnInstallOllama" class="btn btn-ghost btn-sm" style="width:100%;font-size:10.5px;padding:4px 6px;display:none;margin-top:4px;">Instalar Ollama (WinGet)</button>
+      </div>
+    </div>
+
+    <div class="mode-box">
+      <label class="side-label" style="padding:0;" for="inputDiretorioCanais">Pasta Raiz das Gravações</label>
+      <div style="display:flex;gap:4px;margin-top:2px;">
+        <input id="inputDiretorioCanais" type="text" placeholder="(Padrão: canais/ no projeto)" style="flex:1;height:28px;padding:0 8px;border-radius:6px;border:1px solid var(--hairline-strong);background:var(--bg-input);color:var(--text);font-size:11px;">
+        <button id="btnBrowseDiretorioCanais" class="btn btn-sm" title="Escolher pasta no computador" style="padding:0 8px;font-size:12px;">📁</button>
+      </div>
+      <div style="display:flex;gap:4px;margin-top:4px;">
+        <button id="btnSaveDiretorioCanais" class="btn btn-sm" style="flex:1;font-size:10.5px;padding:4px;">Salvar</button>
+        <button id="btnOpenDiretorioCanais" class="btn btn-ghost btn-sm" style="flex:1;font-size:10.5px;padding:4px;">Abrir</button>
+      </div>
+    </div>
+
+    <div class="mode-box">
+      <label class="side-label" style="padding:0;" for="inputOutputDir">Pasta de Saída dos Clipes</label>
+      <input id="inputOutputDir" type="text" placeholder="(Padrão: 05_cortes_extraidos)" style="width:100%;height:28px;padding:0 8px;border-radius:6px;border:1px solid var(--hairline-strong);background:var(--bg-input);color:var(--text);font-size:11px;">
+      <div style="display:flex;gap:4px;margin-top:4px;">
+        <button id="btnSaveOutputDir" class="btn btn-sm" style="flex:1;font-size:10.5px;padding:4px;">Salvar pasta</button>
+        <button id="btnOpenOutputDir" class="btn btn-ghost btn-sm" style="flex:1;font-size:10.5px;padding:4px;">Abrir</button>
+      </div>
+    </div>
+
     <div class="side-section">
       <div class="side-label">Canais</div>
       <div id="channelList" class="channel-list"></div>
@@ -983,6 +1028,46 @@ function renderSidebar() {
     hint.textContent = modo === 'automatico'
       ? 'Pré-transcreve cada bloco ao fechar'
       : 'GPU livre durante a gravação';
+  }
+
+  const modoAnalise = (data.padroes?.modo_analise || 'blocos').toLowerCase();
+  const selAnalise = document.getElementById('modoAnaliseSelect');
+  const hintAnalise = document.getElementById('modoAnaliseHint');
+  if (selAnalise && document.activeElement !== selAnalise && selAnalise.value !== modoAnalise) {
+    selAnalise.value = modoAnalise;
+  }
+  if (hintAnalise) {
+    hintAnalise.textContent = modoAnalise === 'automatico'
+      ? 'Analisa e corta clipes ao vivo assim que o bloco fecha'
+      : 'Acumula lotes para você pedir a análise';
+  }
+
+  const aiBackend = (data.padroes?.ai_backend || 'desabilitado').toLowerCase();
+  const selAi = document.getElementById('aiBackendSelect');
+  const hintAi = document.getElementById('aiBackendHint');
+  if (selAi && document.activeElement !== selAi && selAi.value !== aiBackend) {
+    selAi.value = aiBackend;
+  }
+  if (hintAi) {
+    hintAi.textContent = aiBackend === 'local'
+      ? 'Ollama local (Gemma 3 4B) ativo'
+      : (aiBackend === 'api' ? 'Chamando endpoint OpenAI/Groq' : 'Detecção leve sem consumo extra');
+  }
+
+  const ollamaBox = document.getElementById('ollamaControlBox');
+  if (ollamaBox) {
+    ollamaBox.style.display = aiBackend === 'local' ? 'block' : 'none';
+    if (aiBackend === 'local') checkOllamaStatus();
+  }
+
+  const inputDirCanais = document.getElementById('inputDiretorioCanais');
+  if (inputDirCanais && document.activeElement !== inputDirCanais) {
+    inputDirCanais.value = data.padroes?.diretorio_canais || '';
+  }
+
+  const inputOut = document.getElementById('inputOutputDir');
+  if (inputOut && document.activeElement !== inputOut) {
+    inputOut.value = data.padroes?.output_dir || '';
   }
 
   const listEl = document.getElementById('channelList');
@@ -1580,11 +1665,13 @@ document.getElementById('btnSaveChannel').onclick = async () => {
 document.getElementById('btnDeleteChannel').onclick = async () => {
   const nome = state.editingOriginalName;
   if (!nome) return;
-  if (!confirm(`Remover "${nome}" de canais.json?\n\nOs vídeos já gravados em canais/${nome}/ NÃO serão apagados.`)) return;
+  if (!confirm(`Remover canal "${nome}"?`)) return;
+  const apagarDisco = confirm(`Deseja também APAGAR todas as pastas e vídeos gravados deste canal no disco permanentemente?\n\n- OK = Excluir e apagar arquivos do disco\n- Cancelar = Apenas remover da lista`);
   try {
-    await api('/api/channels/delete', { method: 'POST', body: JSON.stringify({ channel: nome }) });
+    await api('/api/channels/delete', { method: 'POST', body: JSON.stringify({ channel: nome, delete_files: apagarDisco }) });
     closeChannelModal();
-    showToast(`Canal ${nome} removido do canais.json`);
+    showToast(`Canal ${nome} removido.`);
+    state.selectedChannel = null;
     await refreshState();
   } catch (err) { showToast(err.message); }
 };
@@ -1621,6 +1708,145 @@ document.getElementById('modoTranscricaoSelect').onchange = async (e) => {
   } catch (err) {
     showToast(err.message);
     await refreshState();
+  }
+};
+
+document.getElementById('modoAnaliseSelect').onchange = async (e) => {
+  const modo = e.target.value;
+  try {
+    await api('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify({ modo_analise: modo }),
+    });
+    showToast(
+      modo === 'automatico'
+        ? 'Modo automático: detectando e cortando momentos ao vivo.'
+        : 'Modo em blocos: aguardando você pedir a finalização.'
+    );
+    await refreshState();
+  } catch (err) {
+    showToast(err.message);
+    await refreshState();
+  }
+};
+
+async function checkOllamaStatus() {
+  const txt = document.getElementById('ollamaStatusText');
+  const btnPull = document.getElementById('btnPullGemma');
+  const btnInstall = document.getElementById('btnInstallOllama');
+  if (!txt) return;
+  try {
+    const res = await api('/api/ollama/status');
+    if (res.running) {
+      if (res.has_gemma) {
+        txt.innerHTML = '<span style="color:#4ade80;">● Ollama ativo</span> (Gemma instalado)';
+        btnPull.textContent = 'Re-baixar Gemma 3 (4B)';
+      } else {
+        txt.innerHTML = '<span style="color:#fbbf24;">● Ollama ativo</span> (Gemma ausente)';
+        btnPull.textContent = 'Baixar Gemma 3 (4B)';
+      }
+      btnInstall.style.display = 'none';
+      btnPull.style.display = 'block';
+    } else {
+      if (res.installed) {
+        txt.innerHTML = '<span style="color:#f87171;">● Ollama parado</span>. Inicie o app Ollama.';
+        btnInstall.style.display = 'none';
+      } else {
+        txt.innerHTML = '<span style="color:#94a3b8;">Ollama não instalado.</span>';
+        btnInstall.style.display = 'block';
+      }
+      btnPull.style.display = 'none';
+    }
+  } catch (_) {
+    txt.textContent = 'Erro ao checar Ollama.';
+  }
+}
+
+document.getElementById('aiBackendSelect').onchange = async (e) => {
+  const ai_backend = e.target.value;
+  try {
+    await api('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify({ ai_backend }),
+    });
+    showToast(`Auxílio de IA alterado para: ${ai_backend}`);
+    await refreshState();
+  } catch (err) {
+    showToast(err.message);
+    await refreshState();
+  }
+};
+
+document.getElementById('btnPullGemma').onclick = async () => {
+  try {
+    await api('/api/ollama/pull', { method: 'POST', body: JSON.stringify({ model: 'gemma3:4b' }) });
+    showToast('Download do Gemma 3 (4B) iniciado em segundo plano.');
+  } catch (err) {
+    showToast(err.message);
+  }
+};
+
+document.getElementById('btnInstallOllama').onclick = async () => {
+  try {
+    await api('/api/ollama/install', { method: 'POST', body: '{}' });
+    showToast('Instalação do Ollama iniciada via WinGet...');
+  } catch (err) {
+    showToast(err.message);
+  }
+};
+
+document.getElementById('btnBrowseDiretorioCanais').onclick = async () => {
+  try {
+    showToast('Selecione a pasta na janela que se abriu...');
+    const res = await api('/api/browse/folder');
+    if (res && res.path) {
+      document.getElementById('inputDiretorioCanais').value = res.path;
+      await api('/api/settings', { method: 'POST', body: JSON.stringify({ diretorio_canais: res.path }) });
+      showToast(`Pasta de gravações alterada para: ${res.path}`);
+      await refreshState();
+    }
+  } catch (err) {
+    showToast(err.message);
+  }
+};
+
+document.getElementById('btnSaveDiretorioCanais').onclick = async () => {
+  const dir = (document.getElementById('inputDiretorioCanais')?.value || '').trim();
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({ diretorio_canais: dir }) });
+    showToast(dir ? `Pasta de gravações salva: ${dir}` : 'Usando pasta padrão (canais/).');
+    await refreshState();
+  } catch (err) {
+    showToast(err.message);
+  }
+};
+
+document.getElementById('btnOpenDiretorioCanais').onclick = async () => {
+  const dir = (document.getElementById('inputDiretorioCanais')?.value || '').trim();
+  try {
+    await api('/api/open-folder', { method: 'POST', body: JSON.stringify({ path: dir }) });
+  } catch (err) {
+    showToast(err.message);
+  }
+};
+
+document.getElementById('btnSaveOutputDir').onclick = async () => {
+  const dir = (document.getElementById('inputOutputDir')?.value || '').trim();
+  try {
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({ output_dir: dir }) });
+    showToast(dir ? `Pasta de saída salva: ${dir}` : 'Usando pasta padrão do canal.');
+    await refreshState();
+  } catch (err) {
+    showToast(err.message);
+  }
+};
+
+document.getElementById('btnOpenOutputDir').onclick = async () => {
+  const dir = (document.getElementById('inputOutputDir')?.value || '').trim();
+  try {
+    await api('/api/open-folder', { method: 'POST', body: JSON.stringify({ path: dir }) });
+  } catch (err) {
+    showToast(err.message);
   }
 };
 

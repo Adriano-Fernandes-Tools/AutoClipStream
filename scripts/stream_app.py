@@ -20,21 +20,31 @@ import collections
 import errno
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+# Ensure script directory is available in module search path
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
 from config import (
     CANAIS_CONFIG_FILE,
     CANAIS_DIR,
+    DEFAULT_ANALYSIS_MODE,
+    DEFAULT_AI_BACKEND,
+    DEFAULT_AUTO_CLIP_SCORE,
     DEFAULT_QUALITY,
     DEFAULT_RECONNECT_SECONDS,
     DEFAULT_SEGMENT_MINUTES,
@@ -46,6 +56,7 @@ from config import (
     VIDEO_EXTENSIONS,
     ensure_channel_structure,
     format_mmss,
+    get_canais_dir,
     get_python_console_exe,
     list_channel_names,
     load_channels_config,
@@ -483,6 +494,110 @@ class AutoTranscribeWatcher:
 AUTO_TRANSCRIBE = AutoTranscribeWatcher()
 
 
+class AutoClipWatcher:
+    """Monitora blocos pré-transcritos e corta clipes automaticamente quando modo_analise == 'automatico'."""
+
+    def __init__(self) -> None:
+        self._stop_event = threading.Event()
+        self._wake_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._processed: set[str] = set()
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(
+            target=self._loop, name="auto-clip-watcher", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        self._wake_event.set()
+
+    def wake(self) -> None:
+        self._wake_event.set()
+
+    def _loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                cfg = load_channels_config()
+                padroes = cfg.get("padroes", {})
+                modo = str(padroes.get("modo_analise", DEFAULT_ANALYSIS_MODE)).lower()
+
+                if modo == "automatico":
+                    from auto_clip import analyze_block, save_auto_markers
+                    from cortar_marcadores import _cortar_trecho, _slugify
+                    from premiere_xml import probe_video
+
+                    min_score = float(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE))
+                    custom_output = str(padroes.get("output_dir", "")).strip()
+
+                    for ch_name in list_channel_names():
+                        if self._stop_event.is_set():
+                            break
+                        ch_paths = ensure_channel_structure(ch_name)
+                        dir_fila = ch_paths["02_para_processar"]
+                        pre_dir = dir_fila / PRE_TRANSCRICOES_DIRNAME
+                        if not dir_fila.exists() or not pre_dir.exists():
+                            continue
+
+                        for mkv_path in sorted(dir_fila.iterdir()):
+                            if self._stop_event.is_set():
+                                break
+                            if not mkv_path.is_file() or mkv_path.suffix.lower() not in VIDEO_EXTENSIONS:
+                                continue
+
+                            transcript_json = pre_dir / f"{mkv_path.stem}.json"
+                            if not transcript_json.exists():
+                                continue
+
+                            marker_file = ch_paths["root"] / "marcadores_automaticos" / f"{mkv_path.stem}.json"
+                            if marker_file.exists() or str(mkv_path) in self._processed:
+                                continue
+
+                            self._processed.add(str(mkv_path))
+                            append_log("AUTO-CLIP", f"Analisando momentos: {ch_name}/{mkv_path.name}...")
+                            analysis = analyze_block(ch_name, mkv_path, transcript_json, padroes)
+                            save_auto_markers(ch_name, mkv_path.stem, analysis)
+
+                            score = float(analysis.get("score", 0.0))
+                            momentos = analysis.get("momentos", [])
+                            append_log("AUTO-CLIP", f"[{ch_name}] Score: {score:.0f}/100 | Momentos: {len(momentos)}")
+
+                            if score >= min_score and momentos:
+                                if custom_output:
+                                    out_base = Path(custom_output) / ch_name / "clips_automaticos"
+                                else:
+                                    out_base = ch_paths["05_cortes_extraidos"] / f"auto_{mkv_path.stem}"
+                                out_base.mkdir(parents=True, exist_ok=True)
+
+                                try:
+                                    dur_video = float(probe_video(mkv_path)["duration"])
+                                    for idx, m in enumerate(momentos[:3], start=1):
+                                        center = float(m.get("segundo", 0))
+                                        inicio = max(0.0, center - 12.0)
+                                        dur_corte = min(dur_video - inicio, 30.0)
+                                        if dur_corte <= 2.0:
+                                            continue
+                                        desc = str(m.get("descricao") or f"momento_{idx}")
+                                        slug = _slugify(desc, max_len=36)
+                                        clip_file = out_base / f"{idx:02d}_{slug}_{int(center)}s.mp4"
+                                        _cortar_trecho(mkv_path, clip_file, inicio, dur_corte, modo_copia=False, encoder="auto")
+                                        append_log("AUTO-CLIP", f"★ Clip extraído ({format_mmss(inicio)} -> {format_mmss(inicio+dur_corte)}): {clip_file.name}")
+                                except Exception as exc:
+                                    append_log("AUTO-CLIP", f"Aviso ao cortar clip: {exc}")
+
+            except Exception as exc:
+                append_log("AUTO-CLIP", f"Erro no auto-clip: {exc}")
+
+            self._wake_event.wait(6.0)
+            self._wake_event.clear()
+
+
+AUTO_CLIP = AutoClipWatcher()
+
+
 def _scan_channel_lotes(channel_dir: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Lê os lotes em 03_em_processamento/ e 04_para_edicao/ de um canal."""
     lotes_proc: list[dict[str, Any]] = []
@@ -536,16 +651,13 @@ def build_state_payload() -> dict[str, Any]:
             config_entries[name] = entry
             ordered_names.append(name)
 
-    for disk_name in list_channel_names():
-        if disk_name not in config_entries:
-            ordered_names.append(disk_name)
-
+    base_canais = get_canais_dir()
     canais_out: list[dict[str, Any]] = []
     for name in ordered_names:
         entry = config_entries.get(name)
         in_config = entry is not None
         url = str((entry or {}).get("url") or "").strip()
-        channel_dir = CANAIS_DIR / name
+        channel_dir = base_canais / name
 
         counts = {
             "01_gravando": _count_videos(channel_dir / "01_gravando"),
@@ -604,7 +716,22 @@ def build_state_payload() -> dict[str, Any]:
 
     return {
         "project_root": str(PROJECT_ROOT),
-        "padroes": padroes,
+        "diretorio_canais_efetivo": str(get_canais_dir()),
+        "padroes": {
+            "modo_transcricao": padroes.get("modo_transcricao", DEFAULT_TRANSCRIPTION_MODE),
+            "modo_analise": padroes.get("modo_analise", DEFAULT_ANALYSIS_MODE),
+            "ai_backend": padroes.get("ai_backend", DEFAULT_AI_BACKEND),
+            "ai_api_url": padroes.get("ai_api_url", ""),
+            "ai_api_key": padroes.get("ai_api_key", ""),
+            "ai_modelo": padroes.get("ai_modelo", "gemma3:4b"),
+            "ai_local_url": padroes.get("ai_local_url", "http://localhost:11434"),
+            "auto_clip_min_score": int(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE)),
+            "diretorio_canais": padroes.get("diretorio_canais", ""),
+            "output_dir": padroes.get("output_dir", ""),
+            "duracao_bloco_minutos": int(padroes.get("duracao_bloco_minutos", DEFAULT_SEGMENT_MINUTES)),
+            "qualidade": padroes.get("qualidade", DEFAULT_QUALITY),
+            "intervalo_reconexao_segundos": int(padroes.get("intervalo_reconexao_segundos", DEFAULT_RECONNECT_SECONDS)),
+        },
         "canais": canais_out,
         "recording_active_count": RECORDER_MGR.active_count(),
         "job": JOB_MGR.snapshot(),
@@ -741,6 +868,14 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                 )
                 return
 
+            if path == "/api/ollama/status":
+                self._handle_ollama_status()
+                return
+
+            if path == "/api/browse/folder":
+                self._handle_browse_folder()
+                return
+
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "Endpoint não encontrado."})
         except Exception as exc:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
@@ -791,6 +926,12 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/open-folder":
                 self._handle_open_folder(body)
+                return
+            if path == "/api/ollama/pull":
+                self._handle_ollama_pull(body)
+                return
+            if path == "/api/ollama/install":
+                self._handle_ollama_install()
                 return
             if path == "/api/logs/clear":
                 clear_logs()
@@ -862,6 +1003,7 @@ class StreamAppHandler(BaseHTTPRequestHandler):
         cfg = load_channels_config()
         padroes = cfg.setdefault("padroes", {})
 
+        # --- Transcrição ---
         modo = body.get("modo_transcricao")
         if modo is not None:
             modo_norm = str(modo).strip().lower()
@@ -876,6 +1018,71 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             if modo_norm == "automatico":
                 AUTO_TRANSCRIBE.wake()
 
+        # --- Análise automática de momentos ---
+        modo_analise = body.get("modo_analise")
+        if modo_analise is not None:
+            modo_analise_norm = str(modo_analise).strip().lower()
+            if modo_analise_norm not in ("blocos", "automatico"):
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "modo_analise inválido. Use 'blocos' ou 'automatico'."},
+                )
+                return
+            padroes["modo_analise"] = modo_analise_norm
+            append_log("APP", f"Modo de análise alterado para: {modo_analise_norm}.")
+
+        # --- AI backend ---
+        ai_backend = body.get("ai_backend")
+        if ai_backend is not None:
+            ai_backend_norm = str(ai_backend).strip().lower()
+            if ai_backend_norm not in ("desabilitado", "api", "local"):
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "ai_backend inválido. Use 'desabilitado', 'api' ou 'local'."},
+                )
+                return
+            padroes["ai_backend"] = ai_backend_norm
+            append_log("APP", f"AI backend alterado para: {ai_backend_norm}.")
+
+        for key in ("ai_api_url", "ai_api_key", "ai_modelo", "ai_local_url"):
+            if body.get(key) is not None:
+                padroes[key] = str(body[key]).strip()
+
+        if body.get("auto_clip_min_score") is not None:
+            score = int(body["auto_clip_min_score"])
+            padroes["auto_clip_min_score"] = max(0, min(100, score))
+
+        # --- Pasta de canais / gravações ---
+        if body.get("diretorio_canais") is not None:
+            raw_dir = str(body["diretorio_canais"]).strip()
+            if raw_dir and not Path(raw_dir).exists():
+                try:
+                    Path(raw_dir).mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {"error": f"Não foi possível criar diretorio_canais: {exc}"},
+                    )
+                    return
+            padroes["diretorio_canais"] = raw_dir
+            append_log("APP", f"Diretório de canais configurado: {raw_dir or '(padrão: canais/ no projeto)'}")
+
+        # --- Pasta de saída de cortes ---
+        if body.get("output_dir") is not None:
+            raw_dir = str(body["output_dir"]).strip()
+            if raw_dir and not Path(raw_dir).exists():
+                try:
+                    Path(raw_dir).mkdir(parents=True, exist_ok=True)
+                except OSError as exc:
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {"error": f"Não foi possível criar output_dir: {exc}"},
+                    )
+                    return
+            padroes["output_dir"] = raw_dir
+            append_log("APP", f"Pasta de saída configurada: {raw_dir or '(padrão)'}")
+
+        # --- Gravação ---
         if body.get("duracao_bloco_minutos") is not None:
             padroes["duracao_bloco_minutos"] = max(1, int(body["duracao_bloco_minutos"]))
         if body.get("qualidade") is not None:
@@ -897,8 +1104,41 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             if isinstance(c, dict) and sanitize_channel_name(str(c.get("nome") or "")) != nome
         ]
         _save_channels_config(cfg)
-        append_log("APP", f"Canal '{nome}' removido de canais.json (pastas preservadas).")
+
+        delete_files = bool(body.get("delete_files") or body.get("delete_folder"))
+        if delete_files:
+            canal_dir = get_canais_dir() / nome
+            if canal_dir.exists():
+                shutil.rmtree(canal_dir, ignore_errors=True)
+                append_log("APP", f"Canal '{nome}' e seus arquivos apagados do disco.")
+            else:
+                append_log("APP", f"Canal '{nome}' removido de canais.json.")
+        else:
+            append_log("APP", f"Canal '{nome}' removido de canais.json (pastas preservadas).")
+
         self._send_json(HTTPStatus.OK, {"ok": True})
+
+    def _handle_browse_folder(self) -> None:
+        result_path = [""]
+
+        def _ask() -> None:
+            try:
+                import tkinter as tk
+                from tkinter import filedialog
+                root = tk.Tk()
+                root.withdraw()
+                root.attributes("-topmost", True)
+                selected = filedialog.askdirectory(title="Selecione a pasta de canais e gravações")
+                root.destroy()
+                if selected:
+                    result_path[0] = str(Path(selected).resolve())
+            except Exception as exc:
+                append_log("APP", f"Erro no seletor de pasta: {exc}")
+
+        t = threading.Thread(target=_ask, daemon=True)
+        t.start()
+        t.join(timeout=60)
+        self._send_json(HTTPStatus.OK, {"path": result_path[0]})
 
     def _handle_record_start(self, body: dict[str, Any]) -> None:
         if body.get("all"):
@@ -1079,11 +1319,137 @@ class StreamAppHandler(BaseHTTPRequestHandler):
         os.startfile(str(safe_target))
         self._send_json(HTTPStatus.OK, {"ok": True, "path": str(safe_target)})
 
+    def _handle_ollama_status(self) -> None:
+        cfg = load_channels_config()
+        local_url = str(cfg.get("padroes", {}).get("ai_local_url") or "http://localhost:11434").rstrip("/")
+        running = False
+        models: list[str] = []
+        has_gemma = False
+
+        try:
+            req = urllib.request.Request(f"{local_url}/api/tags", headers={"User-Agent": "AutoClipStream"})
+            with urllib.request.urlopen(req, timeout=1.8) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    running = True
+                    models = [str(m.get("name", "")) for m in data.get("models", []) if isinstance(m, dict)]
+                    has_gemma = any("gemma" in m.lower() for m in models)
+        except Exception:
+            running = False
+
+        installed = (shutil.which("ollama") is not None) or (shutil.which("ollama.exe") is not None)
+        self._send_json(HTTPStatus.OK, {
+            "installed": installed,
+            "running": running,
+            "models": models,
+            "has_gemma": has_gemma,
+            "url": local_url,
+        })
+
+    def _handle_ollama_pull(self, body: dict[str, Any]) -> None:
+        model_name = str(body.get("model") or "gemma3:4b").strip()
+        cfg = load_channels_config()
+        local_url = str(cfg.get("padroes", {}).get("ai_local_url") or "http://localhost:11434").rstrip("/")
+
+        def _pull_worker() -> None:
+            append_log("OLLAMA", f"Iniciando download do modelo '{model_name}'...")
+            try:
+                payload = json.dumps({"name": model_name, "stream": True}).encode("utf-8")
+                req = urllib.request.Request(
+                    f"{local_url}/api/pull",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=1800) as resp:
+                    last_pct = -1
+                    for raw_line in resp:
+                        if not raw_line:
+                            continue
+                        try:
+                            chunk = json.loads(raw_line.decode("utf-8"))
+                            status = chunk.get("status", "")
+                            total = chunk.get("total", 0)
+                            completed = chunk.get("completed", 0)
+                            if total > 0 and completed > 0:
+                                pct = int((completed / total) * 100)
+                                if pct >= last_pct + 10 or pct == 100:
+                                    last_pct = pct
+                                    bar_len = 10
+                                    filled = int(bar_len * completed / total)
+                                    bar = "█" * filled + "░" * (bar_len - filled)
+                                    mb_done = completed / (1024 * 1024)
+                                    mb_total = total / (1024 * 1024)
+                                    append_log("OLLAMA", f"[{bar}] {pct}% ({mb_done:.0f}MB / {mb_total:.0f}MB) — {status}")
+                            elif status:
+                                append_log("OLLAMA", f"Status: {status}")
+                        except Exception:
+                            pass
+                append_log("OLLAMA", f"Modelo '{model_name}' pronto para uso!")
+                return
+            except Exception as exc:
+                append_log("OLLAMA", f"Tentando download via CLI local ({exc})...")
+
+            ollama_bin = shutil.which("ollama") or "ollama"
+            try:
+                proc = subprocess.run(
+                    [ollama_bin, "pull", model_name],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=SUBPROCESS_FLAGS,
+                )
+                if proc.returncode == 0:
+                    append_log("OLLAMA", f"Modelo '{model_name}' baixado com sucesso via CLI!")
+                else:
+                    append_log("OLLAMA", f"Falha no download via CLI: {proc.stderr[:150]}")
+            except Exception as exc:
+                append_log("OLLAMA", f"Erro ao baixar modelo '{model_name}': {exc}")
+
+        threading.Thread(target=_pull_worker, daemon=True, name="ollama-pull").start()
+        self._send_json(HTTPStatus.OK, {"ok": True, "message": f"Download de '{model_name}' iniciado em segundo plano."})
+
+    def _handle_ollama_install(self) -> None:
+        def _install_worker() -> None:
+            append_log("OLLAMA", "Instalação silenciosa do Ollama iniciada via winget...")
+            try:
+                cmd = [
+                    "winget", "install", "-e", "--id", "Ollama.Ollama",
+                    "--accept-source-agreements", "--accept-package-agreements",
+                    "--silent", "--disable-interactivity"
+                ]
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=SUBPROCESS_FLAGS,
+                )
+                if proc.stdout:
+                    for line in proc.stdout:
+                        line_str = line.strip()
+                        if line_str and ("%" in line_str or "Baixando" in line_str or "Instalando" in line_str or "Encontrado" in line_str):
+                            append_log("OLLAMA", line_str)
+                proc.wait()
+                if proc.returncode == 0:
+                    append_log("OLLAMA", "Ollama instalado com sucesso! Serviço disponível em http://localhost:11434")
+                else:
+                    append_log("OLLAMA", f"Winget finalizado com código {proc.returncode}")
+            except Exception as exc:
+                append_log("OLLAMA", f"Erro no instalador: {exc}")
+
+        threading.Thread(target=_install_worker, daemon=True, name="ollama-install").start()
+        self._send_json(HTTPStatus.OK, {"ok": True, "message": "Instalação silenciosa do Ollama disparada via winget."})
+
     def _handle_shutdown(self) -> None:
         self._send_json(HTTPStatus.OK, {"ok": True, "message": "Encerrando servidor..."})
 
         def _stop_async() -> None:
             time.sleep(0.25)
+            AUTO_CLIP.stop()
             AUTO_TRANSCRIBE.stop()
             RECORDER_MGR.stop_all(wait_timeout=8.0)
             srv = SERVER_REF.get("server")
@@ -1115,13 +1481,15 @@ def main(argv: list[str] | None = None) -> int:
         raise
 
     SERVER_REF["server"] = server
+    atexit.register(AUTO_CLIP.stop)
     atexit.register(AUTO_TRANSCRIBE.stop)
     atexit.register(RECORDER_MGR.stop_all, 6.0)
     AUTO_TRANSCRIBE.start()
+    AUTO_CLIP.start()
 
     def _sig_handler(signum, frame) -> None:
         threading.Thread(
-            target=lambda: (AUTO_TRANSCRIBE.stop(), RECORDER_MGR.stop_all(6.0), server.shutdown()),
+            target=lambda: (AUTO_CLIP.stop(), AUTO_TRANSCRIBE.stop(), RECORDER_MGR.stop_all(6.0), server.shutdown()),
             daemon=True,
         ).start()
 
@@ -1135,6 +1503,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         server.serve_forever()
     finally:
+        AUTO_CLIP.stop()
         AUTO_TRANSCRIBE.stop()
         RECORDER_MGR.stop_all(6.0)
         server.server_close()

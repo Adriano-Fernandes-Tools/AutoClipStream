@@ -18,9 +18,15 @@ import re
 import subprocess
 import unicodedata
 from pathlib import Path
+import sys
 from typing import Any
 
-from config import FFMPEG_BIN, SUBPROCESS_FLAGS, ensure_channel_structure, format_mmss
+# Ensure script directory is available in module search path
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from config import FFMPEG_BIN, SUBPROCESS_FLAGS, ensure_channel_structure, format_mmss, load_channels_config
 from premiere_xml import probe_video
 
 
@@ -127,6 +133,7 @@ def exportar_cortes_lote(
     folga_seg: float = 2.0,
     modo_copia: bool = False,
     encoder: str = "auto",
+    output_dir: str | None = None,
 ) -> list[Path]:
     paths = ensure_channel_structure(channel_name)
     safe_name = paths["name"].name
@@ -137,7 +144,16 @@ def exportar_cortes_lote(
 
     decisao: dict[str, Any] = json.loads(decisao_path.read_text(encoding="utf-8-sig"))
     edicao_dir = paths["04_para_edicao"] / lote_id
-    saida_dir = paths["05_cortes_extraidos"] / lote_id
+
+    # Resolve pasta de saída: output_dir > padroes.output_dir > 05_cortes_extraidos/lote_id
+    if not output_dir:
+        cfg = load_channels_config()
+        output_dir = str(cfg.get("padroes", {}).get("output_dir", "")).strip()
+
+    if output_dir:
+        saida_dir = Path(output_dir) / safe_name / lote_id
+    else:
+        saida_dir = paths["05_cortes_extraidos"] / lote_id
 
     gerados: list[Path] = []
     indice = 1
@@ -185,7 +201,7 @@ def exportar_cortes_lote(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Corta clipes .mp4 individuais em 05_cortes_extraidos/ a partir dos marcadores."
+        description="Corta clipes .mp4 individuais a partir dos marcadores de um lote."
     )
     parser.add_argument("--canal", required=True, help="Nome do canal.")
     parser.add_argument("--lote", required=True, help="ID do lote (ex: lote_20261119_120000).")
@@ -206,6 +222,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="auto",
         help="Encoder ao cortar com precisão no frame (padrão: auto).",
     )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="Pasta de saída dos clips. Se omitido, usa 05_cortes_extraidos/ ou o padrão configurado.",
+    )
     return parser.parse_args(argv)
 
 
@@ -217,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         folga_seg=args.folga,
         modo_copia=args.copia,
         encoder=args.encoder,
+        output_dir=getattr(args, "output_dir", None),
     )
     return 0
 

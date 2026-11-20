@@ -1,0 +1,70 @@
+# ==============================================================================
+# AutoClipStream — .gitignore
+# ==============================================================================
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+.env
+
+# ==============================================================================
+# DADOS LOCAIS DE GRAVAÇÃO — nunca commitar
+# Cada usuário gera sua própria pasta canais/ ao rodar o app.
+# ==============================================================================
+canais/
+
+# ==============================================================================
+# ARQUIVOS DE VÍDEO E ÁUDIO PESADOS
+# ==============================================================================
+*.mkv
+*.mp4
+*.ts
+*.mov
+*.avi
+*.flv
+*.webm
+*.wav
+*.aac
+*.srt
+
+# ==============================================================================
+# LOGS E ARQUIVOS TEMPORÁRIOS
+# ==============================================================================
+*.log
+*.tmp
+*.json.tmp
+registro_gravacoes.jsonl
+marcadores_manuais.json
+_ultimo_contexto.json
+
+# ==============================================================================
+# CACHES DE FRAME / TRANSCRIÇÃO (GERADOS AUTOMATICAMENTE)
+# ==============================================================================
+_pre_transcricoes/
+_frames_*/
+*.jpg
+*.png
+!exemplos_layout_9x16/*.jpg
+
+# ==============================================================================
+# EDITOR E SISTEMA OPERACIONAL
+# ==============================================================================
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store
+ehthumbs.db

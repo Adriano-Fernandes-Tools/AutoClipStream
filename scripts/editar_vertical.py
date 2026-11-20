@@ -22,7 +22,13 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+import sys
 from typing import Any
+
+# Ensure script directory is available in module search path
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from PIL import Image, ImageDraw, ImageFont
 

@@ -1,0 +1,18 @@
+{
+  "padroes": {
+    "duracao_bloco_minutos": 10,
+    "qualidade": "best",
+    "intervalo_reconexao_segundos": 30,
+    "modo_transcricao": "automatico",
+    "modo_analise": "automatico",
+    "ai_backend": "desabilitado",
+    "ai_api_url": "",
+    "ai_api_key": "",
+    "ai_modelo": "gemma3:4b",
+    "ai_local_url": "http://localhost:11434",
+    "auto_clip_min_score": 65,
+    "diretorio_canais": "",
+    "output_dir": ""
+  },
+  "canais": []
+}
