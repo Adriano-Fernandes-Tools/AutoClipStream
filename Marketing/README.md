@@ -1,4 +1,4 @@
-# Acervo Estratégico GTA 6 (`@helixgamess`) — Índice e Guia Rápido
+# Acervo Estratégico GTA 6 — Índice e Guia Rápido
 
 Este acervo reúne as regras práticas, formatos, gatilhos mentais, moldes de hooks, banco de headlines e checklist de edição para produzir cortes verticais (**`1080x1920` / 9:16**) das lives de **GTA 6** nos canais monitorados (`Alanzoka`, `Bistecone`, `DaviJones` e `MrFall`).
 
@@ -22,7 +22,7 @@ Um dos resultados mais claros e confiáveis do estudo de **550 Shorts** é que *
 | **Tela dividida (`split`)** | **`1,54×`** (acima da mediana em **2 de 2** canais) | Colocar câmera e gameplay juntos (nosso padrão **38% topo / 62% base**) prende o olhar em dois pontos de interesse ao mesmo tempo. |
 | **Gatilhos vencedores** | **Polêmica `1,45×`** (4/4 canais) · **Medo/Alerta `1,17×`** (6/7) · **Pergunta `1,16×` a `1,94×`** · **Curiosidade `1,11×`** (7/10) · **Relato `1,35×`–`1,85×`** | Quando o clipe tem uma tensão clara (pergunta, erro, discordância, desafio ou segredo), o alcance dispara. |
 
-### Como aplicamos isso no `@helixgamess` sem gravar locução externa
+### Como aplicamos isso sem gravar locução externa
 
 Na live gravada, nós não controlamos o roteiro do streamer antes de ele falar — mas controlamos **as 2 alavancas que decidem cerca de 80% do resultado do corte**:
 
@@ -33,21 +33,11 @@ Na live gravada, nós não controlamos o roteiro do streamer antes de ele falar 
 
 ---
 
-## 2. O que foi descartado do estudo antigo de Fortnite
-
-Para manter este acervo 100% focado no projeto de cortes de GTA 6, foram descartadas todas as regras e táticas exclusivas do antigo projeto de Fortnite:
-- Divulgação de **código de criador** e obrigatoriedade de `#EpicPartner`;
-- Pautas diárias de **loja de itens, V-Bucks e sprites**;
-- Funis de **mapas criativos UEFN** e promoções com renders do `FModel` / `Fortnite Porting`;
-- Roteiros de **voz em off de estúdio** (no `@helixgamess`, a voz é sempre a reação e narração natural do próprio streamer na live, apoiada pela Headline na tela e pela legenda POP de 1 palavra).
-
----
-
-## 3. Mapa dos Documentos do Acervo
+## 2. Mapa dos Documentos do Acervo
 
 | Documento | O que você encontra lá | Quando consultar |
 | :--- | :--- | :--- |
 | [formatos-e-estruturas-gta.md](file:///E:/Antigravity/Stream-clipping/Marketing/formatos-e-estruturas-gta.md) | Os **6 formatos vencedores** de corte para GTA 6 (`F1` a `F6`), duração ideal, layout 9:16 recomendado e o **esqueleto segundo a segundo** de cada um. | Na hora de classificar um momento da live e decidir **como montar a história** do corte. |
 | [gatilhos-e-hooks-gta.md](file:///E:/Antigravity/Stream-clipping/Marketing/gatilhos-e-hooks-gta.md) | Ranking dos **gatilhos mentais validados** (`1,11×` a `1,94×`), como escolher o **Ponto IN perfeito (`0–3,5s`)** na transcrição e como salvar clipes de reação pura. | Ao garimpar o `_pacote_ia.md` e definir **onde exatamente abrir o corte** (`IN`). |
 | [banco-headlines-e-titulos-gta.md](file:///E:/Antigravity/Stream-clipping/Marketing/banco-headlines-e-titulos-gta.md) | Regras de ouro para Headlines de 5–10s, quando usar cada um dos **3 estilos visuais** (Solta, Tarja Vermelha, Caixa Branca), **60+ moldes prontos para GTA 6** e regras para o título do post. | Para escrever a **Headline da tela** e o **título da postagem** no TikTok, Reels e Shorts. |
-| [retencao-edicao-e-checklist-gta.md](./retencao-edicao-e-checklist-gta.md) | Padrão técnico e visual fechado do `@helixgamess` (resolução, coordenadas dos 4 streamers, legenda POP, Zoom, Tela Cheia, Blur, áudio `-14 LUFS`, marca d'água 30%), técnicas de retenção e **Checklist de 7 pontos**. | Como manual oficial de edição (humana ou automática) e revisão final antes de exportar. |
+| [retencao-edicao-e-checklist-gta.md](./retencao-edicao-e-checklist-gta.md) | Padrão técnico e visual (resolução, coordenadas dos 4 streamers, legenda POP, Zoom, Tela Cheia, Blur, áudio `-14 LUFS`, marca d'água 30%), técnicas de retenção e **Checklist de 7 pontos**. | Como manual oficial de edição (humana ou automática) e revisão final antes de exportar. |
