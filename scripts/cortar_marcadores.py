@@ -54,6 +54,8 @@ def _cortar_trecho(
     duracao_seg: float,
     modo_copia: bool,
     encoder: str,
+    *,
+    channel: str = "",
 ) -> None:
     dst_mp4.parent.mkdir(parents=True, exist_ok=True)
 
@@ -130,7 +132,11 @@ def _cortar_trecho(
             return
         if encoder == "nvenc":
             raise RuntimeError(f"Falha no h264_nvenc: {res.stderr.strip()}")
-        logger.warning("h264_nvenc indisponível (%s). Usando libx264...", res.stderr.strip()[:120])
+        logger.warning(
+            "h264_nvenc indisponível (%s). Usando libx264...",
+            res.stderr.strip()[:120],
+            extra={"channel": channel},
+        )
 
     res_x264 = _run_encode("x264")
     if res_x264.returncode != 0:
