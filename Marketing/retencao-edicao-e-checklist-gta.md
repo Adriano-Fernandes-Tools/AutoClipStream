@@ -1,10 +1,10 @@
-# Manual de Retenção, Padrão de Edição 9:16 e Checklist (`@helixgamess`)
+# Manual de Retenção, Padrão de Edição 9:16 e Checklist
 
-Este documento consolida todas as especificações visuais e técnicas fechadas para o projeto `@helixgamess`, combinadas às táticas de retenção comprovadas nos estudos de **550 Shorts** e **34 vídeos do `Canal 1`**. Serve como referência obrigatória tanto para edição manual quanto para o sistema de edição automática.
+Este documento consolida todas as especificações visuais e técnicas fechadas para o projeto, combinadas às táticas de retenção comprovadas nos estudos de **550 Shorts** e **34 vídeos do `Canal 1`**. Serve como referência obrigatória tanto para edição manual quanto para o sistema de edição automática.
 
 ---
 
-## 1. Especificações Técnicas e Visuais Fechadas (`@helixgamess`)
+## 1. Especificações Técnicas e Visuais Fechadas
 
 | Parâmetro | Especificação Oficial | Motivo / Validação |
 | :--- | :--- | :--- |
@@ -14,7 +14,7 @@ Este documento consolida todas as especificações visuais e técnicas fechadas 
 | **Fonte Oficial** | **`Poppins Black`** (`C:\Windows\Fonts\Poppins-Black.ttf`), **100% MAIÚSCULA** | Máxima legibilidade no celular mesmo com movimento rápido atrás. |
 | **Headline (Gancho)** | Fixa nos **primeiros `5s` a `10s`** (Estilos **01 Solta**, **02 Tarja Vermelha** ou **03 Caixa Branca**) | Garante leitura do **Conceito + Stake** no segundo `0,0s` (`titulo-rosto` acima da mediana em **4 de 4 canais**). |
 | **Legenda Dinâmica** | **1 palavra por vez** em estilo **POP** (`y ≈ 1470–1500`), contorno preto grosso + sombra, palavra-chave em amarelo | 79% dos Shorts do estudo usam legenda por palavra; no Canal 3, **1 palavra por vez rendeu `2,03×`** (contra frase longa). |
-| **Marca d'Água** | **`@helixgamess`** no centro da tela com **30% de opacidade** | Protege os cortes contra repostagem sem atrapalhar a visão do jogo. |
+| **Marca d'Água** | **`@user`** no centro da tela com **30% de opacidade** | Protege os cortes contra repostagem sem atrapalhar a visão do jogo. |
 | **Áudio** | Normalizado no padrão YouTube (**`-14 LUFS`**) | Garante volume consistente sem estourar picos de grito do streamer. |
 
 ---
