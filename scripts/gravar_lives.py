@@ -28,6 +28,11 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
+# Ensure script directory is available in module search path
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
 from config import (
     DEFAULT_QUALITY,
     DEFAULT_RECONNECT_SECONDS,

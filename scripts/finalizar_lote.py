@@ -23,7 +23,13 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
+import sys
 from typing import Any
+
+# Ensure script directory is available in module search path
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from config import (
     CANAIS_DIR,

@@ -1,7 +1,8 @@
 """Configurações centralizadas e utilitários compartilhados do projeto Stream-clipping.
 
 Reúne caminhos do projeto, configurações de gravação, transcrição (faster-whisper),
-extração de grades de frames e tipos/cores de marcadores para o Premiere Pro.
+extração de grades de frames, tipos/cores de marcadores para o Premiere Pro e
+configurações de detecção automática de momentos interessantes (modo automático).
 """
 
 from __future__ import annotations
@@ -29,8 +30,35 @@ CANAIS_CONFIG_FILE = PROJECT_ROOT / "canais.json"
 # BINÁRIOS EXTERNOS
 # ==============================================================================
 
-FFMPEG_BIN = shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
-FFPROBE_BIN = shutil.which("ffprobe") or r"C:\ffmpeg\bin\ffprobe.exe"
+
+def _resolve_binary(binary_name: str) -> str:
+    """Resolve executable path across PATH and standard Windows user installations."""
+    found = shutil.which(binary_name) or shutil.which(f"{binary_name}.exe")
+    if found:
+        return found
+
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        winget_root = Path(local_app_data) / "Microsoft" / "WinGet" / "Packages"
+        if winget_root.is_dir():
+            matches = list(winget_root.glob(f"**/{binary_name}.exe"))
+            if matches:
+                return str(matches[0])
+
+    user_home = Path.home()
+    spotdl_path = user_home / ".spotdl" / f"{binary_name}.exe"
+    if spotdl_path.exists():
+        return str(spotdl_path)
+
+    standard_path = Path(r"C:\ffmpeg\bin") / f"{binary_name}.exe"
+    if standard_path.exists():
+        return str(standard_path)
+
+    return binary_name
+
+
+FFMPEG_BIN = _resolve_binary("ffmpeg")
+FFPROBE_BIN = _resolve_binary("ffprobe")
 SUBPROCESS_FLAGS: int = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 # ==============================================================================
@@ -57,6 +85,32 @@ DEFAULT_RECONNECT_SECONDS = 30
 DEFAULT_TRANSCRIPTION_MODE = "manual"
 PRE_TRANSCRICOES_DIRNAME = "_pre_transcricoes"
 VIDEO_EXTENSIONS: tuple[str, ...] = (".mkv", ".mp4", ".ts", ".mov")
+
+# ==============================================================================
+# DETECÇÃO AUTOMÁTICA DE MOMENTOS INTERESSANTES
+# ==============================================================================
+
+# Modo de análise: "blocos" (manual, acumula blocos) ou "automatico" (processa assim que fecha)
+DEFAULT_ANALYSIS_MODE = "blocos"
+
+# Backend de AI: "desabilitado", "api" (OpenAI-compatible) ou "local" (Ollama)
+DEFAULT_AI_BACKEND = "desabilitado"
+
+# Score mínimo (0-100) para gerar um marcador automático
+DEFAULT_AUTO_CLIP_SCORE = 65
+
+# Palavras-chave de impacto que aumentam o score textual (regex case-insensitive)
+IMPACT_KEYWORDS_RE = re.compile(
+    r"\b("
+    r"caral+ho|cara+l+h+o|krl|kkk+|hauha+|rsrs+|hue+|mano+|"
+    r"q(ue|e)+|isso a[íi]|chapei|isnano|lend[áa]rio|imposs[íi]vel|"
+    r"olh[ao] isso|n[ãa]o acredito|meu deus|nossa|perfeito|inacredit[áa]vel|"
+    r"clip(a|ou|ei|isso)|clippa|salv(a|ou|ei)|grav(a|ou|ei) isso|"
+    r"ganhei|matei|eliminei|first blood|clutch|ace|fl(ick|ick)|"
+    r"rota[çc][ãa]o|rotina|arrumei|consertei|quebrei|top demais"
+    r")\b",
+    re.IGNORECASE | re.UNICODE,
+)
 
 # ==============================================================================
 # TRANSCRIÇÃO (FASTER-WHISPER) — BASEADO EM transcricao_whisper_v4.py

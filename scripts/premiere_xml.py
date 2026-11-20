@@ -16,6 +16,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 from xml.sax.saxutils import escape
+import sys
+
+# Ensure script directory is available in module search path
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from config import FFPROBE_BIN, MARKER_TYPES, SUBPROCESS_FLAGS
 
