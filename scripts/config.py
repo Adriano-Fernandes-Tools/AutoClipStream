@@ -24,6 +24,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 CANAIS_CONFIG_FILE = PROJECT_ROOT / "canais.json"
+CANAIS_EXAMPLE_FILE = PROJECT_ROOT / "canais.example.json"
 
 
 def get_canais_dir() -> Path:
@@ -240,10 +241,18 @@ def ensure_channel_structure(channel_name: str) -> dict[str, Path]:
 
 
 def load_channels_config(config_path: Path | None = None) -> dict[str, Any]:
-    """Lê o arquivo canais.json e retorna o dicionário normalizado."""
+    """Lê o arquivo canais.json e retorna o dicionário normalizado.
+    Se canais.json não existir, inicializa copiando o canais.example.json.
+    """
     path = config_path or CANAIS_CONFIG_FILE
     if not path.exists():
-        return {"padroes": {"modo_transcricao": DEFAULT_TRANSCRIPTION_MODE}, "canais": []}
+        if CANAIS_EXAMPLE_FILE.exists() and path == CANAIS_CONFIG_FILE:
+            try:
+                shutil.copy2(CANAIS_EXAMPLE_FILE, CANAIS_CONFIG_FILE)
+            except Exception:
+                pass
+        if not path.exists():
+            return {"padroes": {"modo_transcricao": DEFAULT_TRANSCRIPTION_MODE}, "canais": []}
 
     raw_text = path.read_text(encoding="utf-8-sig")
     data = json.loads(raw_text)
@@ -281,6 +290,37 @@ def format_srt_time(seconds: float) -> str:
     minutes, rem = divmod(rem, 60_000)
     secs, ms = divmod(rem, 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
+
+
+def gerar_srt_trecho(
+    segments: list[dict[str, Any]],
+    inicio_seg: float,
+    duracao_seg: float,
+    destino_srt: Path,
+) -> bool:
+    """Gera um arquivo .srt com timestamps relativos ao clipe (iniciando em 00:00:00)."""
+    fim_seg = inicio_seg + duracao_seg
+    linhas: list[str] = []
+    idx = 1
+    for seg in segments:
+        s_start = float(seg.get("start", 0.0))
+        s_end = float(seg.get("end", 0.0))
+        text = str(seg.get("text", "")).strip()
+        if not text:
+            continue
+        if s_end > inicio_seg and s_start < fim_seg:
+            rel_start = max(0.0, s_start - inicio_seg)
+            rel_end = min(duracao_seg, s_end - inicio_seg)
+            if rel_end > rel_start:
+                linhas.append(str(idx))
+                linhas.append(f"{format_srt_time(rel_start)} --> {format_srt_time(rel_end)}")
+                linhas.append(text)
+                linhas.append("")
+                idx += 1
+    if linhas:
+        destino_srt.write_text("\n".join(linhas), encoding="utf-8")
+        return True
+    return False
 
 
 def list_channel_names() -> list[str]:

@@ -16,10 +16,12 @@ ENV/
 .env
 
 # ==============================================================================
-# DADOS LOCAIS DE GRAVAÇÃO — nunca commitar
-# Cada usuário gera sua própria pasta canais/ ao rodar o app.
+# DADOS LOCAIS DE GRAVAÇÃO E CONFIGURAÇÃO LOCAL — nunca commitar
+# Cada usuário tem seus próprios canais cadastrados e gravações.
+# O repositório fornece canais.example.json como template padrão.
 # ==============================================================================
 canais/
+canais.json
 
 # ==============================================================================
 # ARQUIVOS DE VÍDEO E ÁUDIO PESADOS
