@@ -1,4 +1,4 @@
-# Banco de Headlines (`0–10s`) e Títulos para GTA 6 (`@helixgamess`)
+# Banco de Headlines (`0–10s`) e Títulos para GTA 6
 
 Em um feed vertical, o espectador decide nos primeiros **1 a 2 segundos** se fica ou desliza. O texto da Headline na tela é lido **antes** mesmo de o ouvido processar a frase do streamer (Canal 1 #33), funcionando como a "capa" do Short.
 
@@ -114,7 +114,7 @@ Preencha os colchetes adaptando para o momento específico da live (`ALANZOKA`, 
 
 No estudo (`titulos.md` + `ENSINAMENTOS.md`), o hook da tela pesa mais que a legenda do post, mas pequenos detalhes no título dão empurrão extra consistente no algoritmo:
 
-| Traço no Título da Postagem | Efeito (`×med`) | Regra Prática para `@helixgamess` |
+| Traço no Título da Postagem | Efeito (`×med`) | Regra Prática |
 | :--- | :--- | :--- |
 | **Termina com Reticências (`…`)** | **`1,22×`** (2/4 canais) | Gera curiosidade na legenda sem entregar o final. |
 | **Formato de Pergunta (`?`)** | **`1,11×`** (5/8 canais) | Excelente quando o corte testa algo ou pede opinião nos comentários. |
@@ -143,4 +143,4 @@ No estudo (`titulos.md` + `ENSINAMENTOS.md`), o hook da tela pesa mais que a leg
 15. `GTA 5 vs GTA 6: olha a reação do [Streamer] vendo isso!`
 
 **Hashtags sugeridas (3 a 5 por post):**
-`#gta6 #gtavi #[nomedostreamer] #gameplay #clips`
+`#gta6 #gtavi #[nomedostreamer] #gameplay #clips #game #meme`
