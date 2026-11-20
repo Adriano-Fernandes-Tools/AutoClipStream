@@ -10,7 +10,7 @@ from faster_whisper import WhisperModel
 
 # --- PASTA -------------------------------------------------------------------
 # None = usa a pasta onde este script está salvo (automático)
-# Caminho fixo: r"C:\Users\Adriano Fernandes\Desktop\Audios"
+# Caminho fixo: r"C:\Audios"
 PASTA_FIXA = None
 
 # --- IDIOMA ------------------------------------------------------------------

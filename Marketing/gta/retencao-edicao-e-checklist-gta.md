@@ -1,6 +1,8 @@
 # Manual de Retenção, Padrão de Edição 9:16 e Checklist
 
-Este documento consolida todas as especificações visuais e técnicas fechadas para o projeto, combinadas às táticas de retenção comprovadas nos estudos de **550 Shorts** e **34 vídeos do `Canal 1`**. Serve como referência obrigatória tanto para edição manual quanto para o sistema de edição automática.
+> Arquivo histórico. Os enquadramentos e a identidade visual pertencem à produção de GTA com quatro canais. Consulte os [limites do renderizador](../fluxo-do-projeto.md) e a [revisão das alegações de retenção](../revisao-das-fontes.md).
+
+Este documento consolida todas as especificações visuais e técnicas fechadas para o projeto, combinadas às táticas de retenção comprovadas nos estudos de **550 Shorts** e **34 vídeos do `L01`**. Serve como referência obrigatória tanto para edição manual quanto para o sistema de edição automática.
 
 ---
 
@@ -13,7 +15,7 @@ Este documento consolida todas as especificações visuais e técnicas fechadas 
 | **Silêncios** | **NÃO cortar silêncios automaticamente** | Pausas de gameplay são parte do suspense, cutscenes e timing cômico. |
 | **Fonte Oficial** | **`Poppins Black`** (`C:\Windows\Fonts\Poppins-Black.ttf`), **100% MAIÚSCULA** | Máxima legibilidade no celular mesmo com movimento rápido atrás. |
 | **Headline (Gancho)** | Fixa nos **primeiros `5s` a `10s`** (Estilos **01 Solta**, **02 Tarja Vermelha** ou **03 Caixa Branca**) | Garante leitura do **Conceito + Stake** no segundo `0,0s` (`titulo-rosto` acima da mediana em **4 de 4 canais**). |
-| **Legenda Dinâmica** | **1 palavra por vez** em estilo **POP** (`y ≈ 1470–1500`), contorno preto grosso + sombra, palavra-chave em amarelo | 79% dos Shorts do estudo usam legenda por palavra; no Canal 3, **1 palavra por vez rendeu `2,03×`** (contra frase longa). |
+| **Legenda Dinâmica** | **1 palavra por vez** em estilo **POP** (`y ≈ 1470–1500`), contorno preto grosso + sombra, palavra-chave em amarelo | 79% dos Shorts do estudo usam legenda por palavra; no S11, **1 palavra por vez rendeu `2,03×`** (contra frase longa). |
 | **Marca d'Água** | **`@user`** no centro da tela com **30% de opacidade** | Protege os cortes contra repostagem sem atrapalhar a visão do jogo. |
 | **Áudio** | Normalizado no padrão YouTube (**`-14 LUFS`**) | Garante volume consistente sem estourar picos de grito do streamer. |
 
@@ -39,18 +41,18 @@ Toda transição entre modos deve ser feita em **corte seco (`corte seco`)**, se
 
 | Canal | Webcam Normal (`x, y, w, h`) | Webcam Zoom *"Olha isso"* (`x, y, w, h`) | Região Principal do Game (`x, y, w, h`) |
 | :--- | :--- | :--- | :--- |
-| **Alanzoka** | `1485, 486, 421, 268` | `1520, 495, 340, 225` | `400, 120, 1060, 960` |
-| **Bistecone** | `1450, 162, 468, 302` | `1510, 195, 340, 235` | `320, 80, 1100, 1000` |
-| **DaviJones** | `1505, 106, 405, 228` | `1555, 115, 305, 195` | `320, 140, 1150, 940` |
-| **MrFall** | `1280, 605, 635, 423` | `1360, 620, 555, 370` | `220, 100, 1200, 980` |
+| **P01** | `1485, 486, 421, 268` | `1520, 495, 340, 225` | `400, 120, 1060, 960` |
+| **P02** | `1450, 162, 468, 302` | `1510, 195, 340, 235` | `320, 80, 1100, 1000` |
+| **P03** | `1505, 106, 405, 228` | `1555, 115, 305, 195` | `320, 140, 1150, 940` |
+| **P04** | `1280, 605, 635, 423` | `1360, 620, 555, 370` | `220, 100, 1200, 980` |
 
 ---
 
 ## 3. Técnicas de Retenção Validadas pelo Estudo
 
-1. **Prova Visual Sincronizada (`1,15×`, acima em 6 de 9 canais · Canal 1 #88 e #89):**
+1. **Prova Visual Sincronizada (`1,15×`, acima em 6 de 9 canais · L01 #88 e #89):**
    - Tudo o que o streamer menciona precisa aparecer claramente dentro do crop vertical de 62% (ou em corte seco para Tela Cheia). Nunca deixe o espectador ouvindo o streamer rir de algo que ficou cortado para fora da borda esquerda/direita.
-2. **Guie o Olhar no Eixo Central (Canal 1 #90):**
+2. **Guie o Olhar no Eixo Central (L01 #90):**
    - A junção webcam/game (`y=720`), a Headline inicial, a marca d'água central e a legenda POP de 1 palavra mantêm o olhar do usuário sempre no **eixo central** da tela, reduzindo fadiga visual no celular.
 3. **Loop Honesto (`1,17×`):**
    - Sempre que a gravação natural permitir, encerre o corte em uma frase ou reação que **conecte de volta** à pergunta ou tese da Headline inicial — sem truncar a resposta nem enganar o público.
