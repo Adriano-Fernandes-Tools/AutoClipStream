@@ -25,7 +25,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
-MARKETING_DIR = PROJECT_ROOT / "Marketing"
+MARKETING_DIR = PROJECT_ROOT / "marketing"
 CANAIS_CONFIG_FILE = PROJECT_ROOT / "canais.json"
 CANAIS_EXAMPLE_FILE = PROJECT_ROOT / "canais.example.json"
 

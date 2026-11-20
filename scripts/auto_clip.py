@@ -197,13 +197,13 @@ def score_transcript_peaks(
 # ==============================================================================
 
 def _load_marketing_guidelines(jogo: str | None = None) -> str:
-    """Carrega diretrizes editoriais resumidas de Marketing/<jogo>/ ou Marketing/geral/."""
+    """Carrega diretrizes editoriais resumidas de marketing/<jogo>/ ou marketing/geral/."""
     try:
         tag = (jogo or "geral").strip().lower()
         if not MARKETING_DIR.exists():
             return ""
 
-        # Mapeia sinônimos comuns para as pastas reais em Marketing/
+        # Mapeia sinônimos comuns para as pastas reais em marketing/
         pasta_alvo = "geral"
         if "gta" in tag:
             pasta_alvo = "gta"
