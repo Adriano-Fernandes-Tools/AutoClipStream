@@ -77,15 +77,21 @@ def _limpar_alucinacoes(texto: str) -> str:
 
 
 def _carregar_modelo_whisper(model_name: str):
-    """Carrega faster-whisper em CUDA e faz fallback para CPU se necessário."""
+    """Carrega faster-whisper em CUDA com fallback seguro de compute_type antes de cair para CPU."""
     from faster_whisper import WhisperModel
 
     if WHISPER_DEVICE == "cuda":
-        try:
-            print(f"Carregando faster-whisper '{model_name}' em CUDA ({WHISPER_COMPUTE_TYPE})...")
-            return WhisperModel(model_name, device="cuda", compute_type=WHISPER_COMPUTE_TYPE)
-        except Exception as err:
-            print(f"[AVISO] Falha ao iniciar CUDA ({err}). Usando CPU (int8)...")
+        candidatos = [WHISPER_COMPUTE_TYPE, "float16", "int8"]
+        tentados = set()
+        for ctype in candidatos:
+            if not ctype or ctype in tentados:
+                continue
+            tentados.add(ctype)
+            try:
+                print(f"Carregando faster-whisper '{model_name}' em CUDA ({ctype})...")
+                return WhisperModel(model_name, device="cuda", compute_type=ctype)
+            except Exception as err:
+                print(f"[AVISO] Tentativa CUDA ({ctype}) falhou: {err}")
 
     print(f"Carregando faster-whisper '{model_name}' em CPU (int8)...")
     return WhisperModel(model_name, device="cpu", compute_type="int8")
@@ -683,7 +689,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--pre-transcrever",
-        nargs="+",
+        nargs="*",
         metavar="VIDEO",
         help="Pré-transcreve vídeos na fila (02_para_processar/) salvando cache em _pre_transcricoes/.",
     )
@@ -694,9 +700,34 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     language = None if (args.idioma is None or args.idioma.lower() == "auto") else args.idioma
 
-    if args.pre_transcrever:
+    if args.pre_transcrever is not None:
+        if args.pre_transcrever:
+            target_videos = [Path(p) for p in args.pre_transcrever]
+        else:
+            # Se chamado sem arquivos específicos, resolve da fila dos canais indicados
+            canais_alvo = []
+            if args.canal:
+                canais_alvo = [sanitize_channel_name(args.canal)]
+            elif args.todos:
+                canais_alvo = list_channel_names()
+            else:
+                canais_alvo = list_channel_names()
+
+            target_videos = []
+            for ch in canais_alvo:
+                paths = ensure_channel_structure(ch)
+                fila_dir = paths["02_para_processar"]
+                if fila_dir.exists():
+                    for v in sorted(fila_dir.iterdir()):
+                        if v.is_file() and v.suffix.lower() in VIDEO_EXTENSIONS:
+                            target_videos.append(v)
+
+        if not target_videos:
+            print("Nenhum vídeo encontrado na fila para pré-transcrição.")
+            return 0
+
         pre_transcrever_arquivos(
-            video_paths=[Path(p) for p in args.pre_transcrever],
+            video_paths=target_videos,
             whisper_model_name=args.modelo,
             language=language,
         )

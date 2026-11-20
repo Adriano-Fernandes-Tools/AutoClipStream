@@ -228,7 +228,7 @@ def finalizar_lote(
     channel_name: str,
     lote_id: str,
     xml_por_bloco: bool = False,
-    gerar_xml: bool = False,
+    gerar_xml: bool = True,
 ) -> dict[str, Any]:
     """Processa decisao_lote.json, move vídeos, gera XML(s) e arquiva metadados."""
     paths = ensure_channel_structure(channel_name)
@@ -471,18 +471,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--gerar-xml",
         action="store_true",
-        help="Gera arquivo(s) XML do Premiere para os blocos aprovados (desativado por padrão).",
+        default=True,
+        help="Gera arquivo(s) XML do Premiere para os blocos aprovados (ativado por padrão).",
+    )
+    parser.add_argument(
+        "--sem-xml",
+        action="store_true",
+        help="Não gera arquivo(s) XML do Premiere.",
     )
     parser.add_argument(
         "--xml-por-bloco",
         action="store_true",
-        help="Gera 1 XML separado por bloco aprovado em vez de 1 sequência única por rodada (implica --gerar-xml).",
+        help="Gera 1 XML separado por bloco aprovado em vez de 1 sequência única por rodada.",
     )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    deve_gerar_xml = False if args.sem_xml else True
 
     pares: list[tuple[str, str]] = []
     if args.canal:
@@ -514,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     for canal, lid in pares:
-        finalizar_lote(canal, lid, xml_por_bloco=args.xml_por_bloco, gerar_xml=args.gerar_xml)
+        finalizar_lote(canal, lid, xml_por_bloco=args.xml_por_bloco, gerar_xml=deve_gerar_xml)
 
     return 0
 

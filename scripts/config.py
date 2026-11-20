@@ -117,6 +117,9 @@ DEFAULT_AI_BACKEND = "desabilitado"
 # Score mínimo (0-100) para gerar um marcador automático
 DEFAULT_AUTO_CLIP_SCORE = 65
 
+# Deletar bloco original (.mkv) após gerar os cortes para economizar espaço em disco
+DEFAULT_DELETE_BLOCK_AFTER_CLIP = False
+
 # Palavras-chave de impacto que aumentam o score textual (regex case-insensitive)
 IMPACT_KEYWORDS_RE = re.compile(
     r"\b("
@@ -136,7 +139,7 @@ IMPACT_KEYWORDS_RE = re.compile(
 
 WHISPER_MODEL = "large-v3"
 WHISPER_DEVICE = "cuda"
-WHISPER_COMPUTE_TYPE = "int8_float16"
+WHISPER_COMPUTE_TYPE = "float16"
 WHISPER_BEAM_SIZE = 5
 WHISPER_LANGUAGE: str | None = "pt"
 VAD_ENABLED = True
