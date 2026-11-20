@@ -110,17 +110,18 @@ def score_audio_peaks(video_path: Path, segment_seconds: int = 10) -> list[dict[
             creationflags=SUBPROCESS_FLAGS,
         )
         peaks: list[dict[str, Any]] = []
+        current_ts: float | None = None
         for line in result.stderr.splitlines():
-            # Format: pts_time:12.34 lavfi.astats.Overall.RMS_level=-18.5
-            m = re.search(r"pts_time:([\d.]+).*RMS_level=([-\d.]+)", line)
-            if not m:
-                continue
-            ts = float(m.group(1))
-            rms = float(m.group(2))
-            # Map -50 → 0, -6 → 100
-            score = max(0.0, min(100.0, (rms + 50) / 44 * 100))
-            if score >= 50:
-                peaks.append({"segundo": round(ts, 2), "score": round(score, 1)})
+            m_ts = re.search(r"pts_time:([\d.]+)", line)
+            if m_ts:
+                current_ts = float(m_ts.group(1))
+            m_rms = re.search(r"RMS_level=([-\d.]+)", line)
+            if m_rms and current_ts is not None:
+                rms = float(m_rms.group(1))
+                # Mapeia -50 dB -> 0, -6 dB -> 100
+                score = max(0.0, min(100.0, (rms + 50) / 44 * 100))
+                if score >= 50:
+                    peaks.append({"segundo": round(current_ts, 2), "score": round(score, 1)})
         return peaks
     except Exception:
         return []
@@ -379,15 +380,28 @@ def analyze_block(
     # --- Score final ponderado ---
     if ai_score is not None:
         final_score = audio_score * 0.3 + text_score * 0.3 + ai_score * 0.4
-    else:
+    elif text_score > 0:
+        # Transcricao disponivel: peso igual entre audio e texto
         final_score = audio_score * 0.5 + text_score * 0.5
+    else:
+        # Sem transcricao: score baseado no audio; se ha picos bons individualmente,
+        # eleva o score global para refletir que o video tem momentos clipaveis.
+        peak_scores = [p["score"] for p in audio_peaks] if audio_peaks else []
+        if peak_scores:
+            best_peak = max(peak_scores)
+            final_score = max(audio_score, best_peak * 0.75)
+        else:
+            final_score = audio_score
     final_score = round(min(100.0, final_score), 1)
 
     # --- Consolidar momentos ---
+    # Coleta todos os picos de audio com score >= 50 como candidatos.
+    # O score global (final_score) decide se o video e clipavel; nao filtramos
+    # candidatos por min_score aqui para nao perder momentos quando so ha audio.
     momentos: list[dict[str, Any]] = []
 
     for peak in audio_peaks:
-        if peak["score"] >= min_score:
+        if peak["score"] >= 50:
             momentos.append({
                 "segundo": peak["segundo"],
                 "score": peak["score"],
@@ -396,7 +410,8 @@ def analyze_block(
             })
 
     for peak in text_peaks:
-        if peak["score"] >= min_score:
+        # text_peaks já vem filtrado com window_score >= 30 em score_transcript_peaks
+        if peak["score"] >= 50:
             momentos.append({
                 "segundo": peak["segundo"],
                 "score": peak["score"],
