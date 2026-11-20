@@ -1,6 +1,6 @@
 # Gatilhos Mentais e Seleção de Hook Falado (`Ponto IN`) para GTA 6
 
-Nos cortes do `@helixgamess`, **não inventamos narração por cima da live**: trabalhamos com a gravação bruta dos streamers (`Alanzoka`, `Bistecone`, `DaviJones`, `MrFall`). Por isso, saber **qual trecho da live cortar** e **em qual segundo exato abrir o corte (`Ponto IN`)** faz toda a diferença entre um clipe de `0,90×` e um viral de `5×+`.
+Nos cortes, **não inventamos narração por cima da live**: trabalhamos com a gravação bruta dos streamers (`Alanzoka`, `Bistecone`, `DaviJones`, `MrFall`). Por isso, saber **qual trecho da live cortar** e **em qual segundo exato abrir o corte (`Ponto IN`)** faz toda a diferença entre um clipe de `0,90×` e um viral de `5×+`.
 
 ---
 
@@ -46,7 +46,7 @@ Ao analisar os marcadores e a transcrição de uma live em `_pacote_ia.md`, proc
 ### Tipo 4 — Ordem de Atenção Visual — Gatilho de Zoom (**`1,07×`**)
 - **O que buscar no texto:** `"olha isso..."`, `"repara nisso..."`, `"olha ali..."`, `"olha o que ele fez..."`, `"para tudo e olha..."`.
 - **Onde cortar (`IN`):** Exatamente nessa chamada de atenção.
-- **Regra do `@helixgamess`:** Sempre que o streamer soltar uma frase desse tipo durante o corte, marcar o timestamp exato para aplicar **Zoom na webcam do streamer** (conforme configurado nas coordenadas calibradas).
+- **Regra:** Sempre que o streamer soltar uma frase desse tipo durante o corte, marcar o timestamp exato para aplicar **Zoom na webcam do streamer** (conforme configurado nas coordenadas calibradas).
 
 ### Tipo 5 — Inversão / "Antes do Desastre" (**71% Top Canal 1**)
 - **O que buscar no texto:** Uma frase calma, confiante ou distraída que acontece **2 a 5 segundos antes** de um acidente, explosão, susto ou bug absurdo.
