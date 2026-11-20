@@ -959,14 +959,6 @@ details.resumo-box pre {
       </div>
     </div>
 
-    <div class="mode-box">
-      <label class="side-label" style="padding:0;display:flex;align-items:center;justify-content:space-between;cursor:pointer;" for="chkDeleteBlockAfterClip">
-        <span>Limpar fila pós-clip</span>
-        <input id="chkDeleteBlockAfterClip" type="checkbox" style="width:14px;height:14px;accent-color:var(--accent);cursor:pointer;">
-      </label>
-      <div class="mode-hint">Deleta apenas o bloco bruto da fila (02_para_processar) após extrair os cortes MP4 para poupar disco. Lotes não são afetados.</div>
-    </div>
-
     <div class="side-section">
       <div class="side-label">Canais</div>
       <div id="channelList" class="channel-list"></div>
@@ -1032,6 +1024,14 @@ details.resumo-box pre {
         <label for="fCookies">Cookies .txt (YouTube se pedir login/anti-bot)</label>
         <input id="fCookies" type="text" placeholder="Caminho para cookies.txt (opcional)">
       </div>
+    <div class="field form-full">
+      <label class="side-label" style="padding:0;display:flex;align-items:center;justify-content:space-between;cursor:pointer;" for="chkDeleteBlockAfterClip">
+        <span>Limpar fila pós-clip</span>
+        <input id="chkDeleteBlockAfterClip" type="checkbox" style="width:14px;height:14px;accent-color:var(--accent);cursor:pointer;">
+      </label>
+      <div class="mode-hint">Deleta apenas o bloco bruto da fila (02_para_processar) após extrair os cortes MP4 para poupar disco. Lotes não são afetados.</div>
+    </div>
+
       <div class="field form-full">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);">
           <input id="fAtivo" type="checkbox" checked style="width:auto;height:auto;accent-color:var(--accent);">
@@ -1300,10 +1300,6 @@ function renderSidebar() {
     inputOut.value = data.padroes?.output_dir || '';
   }
 
-  const chkDel = document.getElementById('chkDeleteBlockAfterClip');
-  if (chkDel && document.activeElement !== chkDel) {
-    chkDel.checked = Boolean(data.padroes?.deletar_bloco_apos_clip);
-  }
 
   if (data.server_info) {
     const sUrl = data.server_info.url_local || 'http://127.0.0.1:8795';
@@ -1385,9 +1381,12 @@ function renderLogs() {
   const consoleEl = document.getElementById('logConsole');
   if (!consoleEl) return;
   const atBottom = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight < 40;
-  const logs = state.data?.logs || [];
+  const channel = state.selectedChannel;
+  const title = document.getElementById('logTitle');
+  if (title) title.textContent = channel ? 'Log de ' + channel : 'Log do canal';
+  const logs = state.data?.logs?.[channel] || [];
   if (!logs.length) {
-    consoleEl.innerHTML = '<div style="color:var(--text-dim)">Nenhum log nesta sessão ainda.</div>';
+    consoleEl.innerHTML = '<div style="color:var(--text-dim)">Nenhum evento deste canal nesta sessão.</div>';
     return;
   }
   consoleEl.innerHTML = logs.map(l => `
@@ -1676,8 +1675,8 @@ function renderMain() {
     <div id="tab-logs" class="tab-panel ${state.activeTab === 'logs' ? 'active' : ''}">
       <div class="section-card">
         <div class="section-head">
-          <span class="section-title">Console em tempo real (gravadores, Whisper e XML)</span>
-          <button class="btn btn-sm" onclick="clearLogs()">Limpar tela</button>
+          <span id="logTitle" class="section-title">Log do canal</span>
+          <button class="btn btn-sm" onclick="clearLogs()">Limpar log do canal</button>
         </div>
         <div id="logConsole" class="log-console"></div>
       </div>
@@ -1707,7 +1706,7 @@ function switchTab(tab) {
 async function refreshState() {
   try {
     const prevSelected = state.selectedChannel;
-    const prevLogsLen = state.data?.logs?.length || 0;
+    const prevLogs = state.data?.logs;
     const prevJobRunning = Boolean(state.data?.job?.running);
     const data = await api('/api/state');
     state.data = data;
@@ -1755,7 +1754,10 @@ async function refreshState() {
     });
 
     if (state.activeTab === 'logs' && document.getElementById('logConsole')) {
-      if (data.logs.length !== prevLogsLen) renderLogs();
+      const channel = state.selectedChannel;
+      if (prevSelected !== channel || JSON.stringify(data.logs?.[channel]) !== JSON.stringify(prevLogs?.[channel])) {
+        renderLogs();
+      }
     } else if (activeEl && activeEl.id === 'inputMarkerNote') {
       const posEl = document.getElementById('markerPosLabel');
       const cntEl = document.getElementById('markerCountLabel');
@@ -1882,8 +1884,10 @@ async function openSubdir(channel, subdir) {
 }
 
 async function clearLogs() {
+  const channel = state.selectedChannel;
+  if (!channel) return;
   try {
-    await api('/api/logs/clear', { method: 'POST', body: '{}' });
+    await api('/api/logs/clear', { method: 'POST', body: JSON.stringify({ channel }) });
     await refreshState();
   } catch (_) {}
 }
@@ -1922,6 +1926,7 @@ function openChannelModal(channelName) {
     document.getElementById('fQualidade').value = ch.qualidade || 'best';
     document.getElementById('fMotor').value = ch.motor || 'auto';
     document.getElementById('fCookies').value = ch.cookies || '';
+    document.getElementById('chkDeleteBlockAfterClip').checked = Boolean(ch.deletar_bloco_apos_clip);
     document.getElementById('fAtivo').checked = Boolean(ch.ativo);
     delBtn.style.display = ch.in_config ? 'inline-flex' : 'none';
   } else {
@@ -1933,6 +1938,7 @@ function openChannelModal(channelName) {
     document.getElementById('fQualidade').value = padroes.qualidade || 'best';
     document.getElementById('fMotor').value = 'auto';
     document.getElementById('fCookies').value = '';
+    document.getElementById('chkDeleteBlockAfterClip').checked = false;
     document.getElementById('fAtivo').checked = true;
     delBtn.style.display = 'none';
   }
@@ -1960,6 +1966,7 @@ document.getElementById('btnSaveChannel').onclick = async () => {
       qualidade: document.getElementById('fQualidade').value,
       motor: document.getElementById('fMotor').value,
       cookies: document.getElementById('fCookies').value.trim(),
+      deletar_bloco_apos_clip: document.getElementById('chkDeleteBlockAfterClip').checked,
       ativo: document.getElementById('fAtivo').checked,
     },
   };
@@ -2209,13 +2216,6 @@ document.getElementById('btnDismissError').onclick = () => {
   renderJobBanner();
 };
 
-document.getElementById('chkDeleteBlockAfterClip').onchange = async (e) => {
-  try {
-    await api('/api/settings', { method: 'POST', body: JSON.stringify({ deletar_bloco_apos_clip: e.target.checked }) });
-    showToast(e.target.checked ? 'Blocos brutos da fila serão excluídos após clipar.' : 'Blocos da fila serão mantidos após clipar.');
-    await refreshState();
-  } catch (err) { showToast(err.message); }
-};
 
 let isExplicitExitAction = false;
 
