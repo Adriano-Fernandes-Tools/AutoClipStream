@@ -1780,7 +1780,9 @@ async function refreshState() {
         renderLogs();
       }
     }
-    state._prevLogsSig = curLogsSig; else if (activeEl && activeEl.id === 'inputMarkerNote') {
+    state._prevLogsSig = curLogsSig;
+
+    if (activeEl && activeEl.id === 'inputMarkerNote') {
       const posEl = document.getElementById('markerPosLabel');
       const cntEl = document.getElementById('markerCountLabel');
       const addBtn = document.getElementById('btnAddMarker');
