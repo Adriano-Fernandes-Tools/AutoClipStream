@@ -25,11 +25,12 @@ AutoClipStream/
 |   `-- app_ui.html            # Interface web do painel de controle
 |-- canais.json                # Configuração e cadastro de canais
 |-- canais/                    # Diretório local de gravações (ignorado pelo git)
-|-- Marketing/                 # Documentação editorial e padrões de retenção
+|-- marketing/                 # Documentação editorial e padrões de retenção
 |-- exemplos_layout_9x16/      # Modelos visuais calibrados
-|-- 1_GRAVAR_LIVES.bat         # Inicia gravação contínua no terminal
-|-- 2_PREPARAR_LOTE.bat        # Executa Whisper e frames nos blocos fechados
-|-- 3_FINALIZAR_LOTE.bat       # Finaliza lotes e gera XML do Premiere
+|-- atalhos_cli/               # Atalhos opcionais para execução em linha de comando
+|   |-- 1_GRAVAR_LIVES.bat     # Inicia gravação contínua no terminal
+|   |-- 2_PREPARAR_LOTE.bat    # Executa Whisper e frames nos blocos fechados
+|   `-- 3_FINALIZAR_LOTE.bat   # Finaliza lotes e gera XML do Premiere
 `-- Abrir Stream-clipping App.bat # Inicia o servidor e abre a interface visual
 ```
 

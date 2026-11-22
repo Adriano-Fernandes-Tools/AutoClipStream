@@ -76,15 +76,33 @@ PORT = 8795
 UI_FILE = SCRIPTS_DIR / "app_ui.html"
 
 LOGS_LOCK = threading.Lock()
-LOGS_BY_CHANNEL: dict[str, collections.deque[dict[str, str]]] = {}
+LOG_SEQ = 0
+LOGS_GLOBAL: collections.deque[dict[str, Any]] = collections.deque(maxlen=250)
+LOGS_BY_CHANNEL: dict[str, collections.deque[dict[str, Any]]] = {}
 
 
 def append_log(source: str, text: str, *, channel: str = "") -> None:
-    """Adiciona uma linha ao buffer de logs em memória."""
+    """Adiciona uma linha ao buffer de logs em memória.
+
+    Se channel for informado, adiciona ao buffer específico do canal.
+    Caso contrário, registra no buffer global/sistema (que é exibido em todos os canais).
+    """
+    global LOG_SEQ
     ts = datetime.now().strftime("%H:%M:%S")
     with LOGS_LOCK:
-        buffer = LOGS_BY_CHANNEL.setdefault(channel, collections.deque(maxlen=250))
-        buffer.append({"ts": ts, "source": str(source), "text": str(text)})
+        LOG_SEQ += 1
+        item = {
+            "id": LOG_SEQ,
+            "ts": ts,
+            "source": str(source),
+            "text": str(text),
+            "channel": str(channel or ""),
+        }
+        if channel:
+            buf = LOGS_BY_CHANNEL.setdefault(channel, collections.deque(maxlen=250))
+            buf.append(item)
+        else:
+            LOGS_GLOBAL.append(item)
 
 
 class _AppLogHandler(logging.Handler):
@@ -92,7 +110,8 @@ class _AppLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         source = record.name.split(".")[-1].upper()
-        append_log(source, self.format(record), channel=getattr(record, "channel", ""))
+        ch = getattr(record, "channel", "")
+        append_log(source, self.format(record), channel=ch)
 
 
 _app_log_handler = _AppLogHandler()
@@ -101,14 +120,25 @@ logging.getLogger("cortar_marcadores").addHandler(_app_log_handler)
 logging.getLogger("cortar_marcadores").setLevel(logging.WARNING)
 
 
-def get_logs(channels: list[str], limit: int = 150) -> dict[str, list[dict[str, str]]]:
+def get_logs_payload(channels: list[str], limit: int = 150) -> dict[str, Any]:
+    """Retorna os logs globais e os logs individuais de cada canal ativo."""
     with LOGS_LOCK:
-        return {channel: list(LOGS_BY_CHANNEL.get(channel, ()))[-limit:] for channel in channels}
+        g_logs = list(LOGS_GLOBAL)[-limit:]
+        ch_logs = {ch: list(LOGS_BY_CHANNEL.get(ch, ()))[-limit:] for ch in channels}
+    return {
+        "global": g_logs,
+        "channels": ch_logs,
+    }
 
 
-def clear_logs(channel: str) -> None:
+def clear_logs(channel: str = "") -> None:
     with LOGS_LOCK:
-        LOGS_BY_CHANNEL.pop(channel, None)
+        if channel and channel in LOGS_BY_CHANNEL:
+            LOGS_BY_CHANNEL[channel].clear()
+        elif not channel or channel == "global":
+            LOGS_GLOBAL.clear()
+            for ch in LOGS_BY_CHANNEL:
+                LOGS_BY_CHANNEL[ch].clear()
 
 
 def _detect_platform(url: str) -> str:
@@ -231,7 +261,7 @@ class RecorderManager:
                 ),
                 cookies_file=str(cookies_val).strip() if cookies_val else None,
                 stop_event=stop_event,
-                on_log=lambda source, text: append_log(source, text, channel=name),
+                on_log=lambda s, t: append_log(s, t, channel=name),
                 on_error=self.set_error,
             )
             t = threading.Thread(target=rec.run_forever, name=f"rec-{name}", daemon=True)
@@ -381,7 +411,8 @@ class JobManager:
         return True, f"Tarefa '{kind}' iniciada."
 
     def _run_worker(self, kind: str, channel: str, cmd: list[str]) -> None:
-        append_log(kind.upper(), f"Executando: {' '.join(cmd)}", channel=channel)
+        ch_tag = channel if channel and channel != "todos" else ""
+        append_log(kind.upper(), f"Executando: {' '.join(cmd)}", channel=ch_tag)
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
@@ -410,7 +441,7 @@ class JobManager:
                     line = raw.rstrip("\r\n")
                     if line.strip():
                         last_line = line.strip()
-                        append_log(kind.upper(), last_line, channel=channel)
+                        append_log(kind.upper(), last_line, channel=ch_tag)
                         with self._lock:
                             self._state["last_message"] = last_line
             exit_code = proc.wait()
@@ -418,7 +449,7 @@ class JobManager:
                 error_msg = f"Processo encerrou com código {exit_code}."
         except Exception as exc:
             error_msg = str(exc)
-            append_log(kind.upper(), f"ERRO: {error_msg}", channel=channel)
+            append_log(kind.upper(), f"ERRO: {error_msg}", channel=ch_tag)
         finally:
             with self._lock:
                 self._current_proc = None
@@ -430,7 +461,7 @@ class JobManager:
             append_log(
                 kind.upper(),
                 f"Finalizado (código {exit_code})" + (f" - {error_msg}" if error_msg else ""),
-                channel=channel,
+                channel=ch_tag,
             )
 
 
@@ -440,14 +471,29 @@ SERVER_REF: dict[str, Any] = {"server": None}
 ANALYZE_CANCEL_EVENTS: dict[str, threading.Event] = {}
 
 
-def _list_untranscribed_queue_files() -> list[Path]:
-    """Lista blocos fechados em canais/*/02_para_processar/ sem pré-transcrição."""
+def _list_untranscribed_queue_files(cfg: dict[str, Any] | None = None) -> list[Path]:
+    """Lista blocos fechados em canais/*/02_para_processar/ sem pré-transcrição, respeitando config de cada canal."""
     if not CANAIS_DIR.exists():
         return []
+    if cfg is None:
+        cfg = load_channels_config()
+    padroes = cfg.get("padroes", {})
+    canais_dict = {
+        sanitize_channel_name(str(c.get("nome", ""))): c
+        for c in cfg.get("canais", [])
+        if isinstance(c, dict)
+    }
     agora = time.time()
     pendentes: list[Path] = []
     for channel_dir in sorted(CANAIS_DIR.iterdir()):
         if not channel_dir.is_dir() or channel_dir.name.startswith("."):
+            continue
+        c_entry = canais_dict.get(channel_dir.name, {})
+        modo_tr = str(
+            c_entry.get("modo_transcricao")
+            or padroes.get("modo_transcricao", DEFAULT_TRANSCRIPTION_MODE)
+        ).lower()
+        if modo_tr != "automatico":
             continue
         dir_fila = channel_dir / "02_para_processar"
         if not dir_fila.exists():
@@ -496,14 +542,8 @@ class AutoTranscribeWatcher:
         while not self._stop_event.is_set():
             try:
                 cfg = load_channels_config()
-                modo = str(
-                    cfg.get("padroes", {}).get(
-                        "modo_transcricao", DEFAULT_TRANSCRIPTION_MODE
-                    )
-                ).lower()
-
-                if modo == "automatico" and not JOB_MGR.snapshot()["running"]:
-                    candidatos = _list_untranscribed_queue_files()
+                if not JOB_MGR.snapshot()["running"]:
+                    candidatos = _list_untranscribed_queue_files(cfg)
                     por_canal: dict[str, list[Path]] = {}
                     for arquivo in candidatos:
                         if self._failed_attempts.get(str(arquivo), 0) < 2:
@@ -626,138 +666,192 @@ class AutoClipWatcher:
             try:
                 cfg = load_channels_config()
                 padroes = cfg.get("padroes", {})
-                modo = str(padroes.get("modo_analise", DEFAULT_ANALYSIS_MODE)).lower()
+                from auto_clip import analyze_block, save_auto_markers
+                from cortar_marcadores import _cortar_trecho, _slugify
+                from premiere_xml import probe_video
 
-                if modo == "automatico":
-                    from auto_clip import analyze_block, save_auto_markers
-                    from cortar_marcadores import _cortar_trecho, _slugify
-                    from premiere_xml import probe_video
+                min_score_default = float(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE))
+                custom_output_default = str(padroes.get("output_dir", "")).strip()
 
-                    min_score = float(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE))
-                    custom_output = str(padroes.get("output_dir", "")).strip()
+                for ch_name in list_channel_names():
+                    if self._stop_event.is_set():
+                        break
+                    entry, _ = _find_channel_entry(ch_name)
+                    ch_modo_corte = str(
+                        (entry or {}).get("modo_corte")
+                        or ("automatico" if (entry or {}).get("modo_analise") == "automatico" else None)
+                        or padroes.get("modo_corte")
+                        or ("automatico" if padroes.get("modo_analise") == "automatico" else "manual")
+                    ).lower()
 
-                    for ch_name in list_channel_names():
+                    ch_modo_lote = str(
+                        (entry or {}).get("modo_lote") or padroes.get("modo_lote", "manual")
+                    ).lower()
+
+                    ch_paths = ensure_channel_structure(ch_name)
+                    dir_fila = ch_paths["02_para_processar"]
+                    pre_dir = dir_fila / PRE_TRANSCRICOES_DIRNAME
+                    if not dir_fila.exists():
+                        continue
+
+                    # Preparação de Lotes Automática se o canal estiver configurado para 'automatico'
+                    if ch_modo_lote == "automatico" and not JOB_MGR.snapshot()["running"]:
+                        agora_ts = time.time()
+                        blocos_prontos = [
+                            f
+                            for f in dir_fila.iterdir()
+                            if f.is_file()
+                            and f.suffix.lower() in VIDEO_EXTENSIONS
+                            and (agora_ts - f.stat().st_mtime) >= 60.0
+                        ]
+                        if blocos_prontos:
+                            JOB_MGR.start_job(
+                                "preparar-lote",
+                                ch_name,
+                                "preparar_lote.py",
+                                ["--canal", ch_name],
+                            )
+
+                    if ch_modo_corte != "automatico":
+                        continue
+
+                    ch_config = dict(padroes)
+                    if entry:
+                        ch_config.update({k: v for k, v in entry.items() if v is not None})
+                    min_score = float(ch_config.get("auto_clip_min_score", min_score_default))
+                    custom_output = str(ch_config.get("output_dir", custom_output_default)).strip()
+
+                    for mkv_path in sorted(dir_fila.iterdir()):
                         if self._stop_event.is_set():
                             break
-                        ch_paths = ensure_channel_structure(ch_name)
-                        dir_fila = ch_paths["02_para_processar"]
-                        pre_dir = dir_fila / PRE_TRANSCRICOES_DIRNAME
-                        if not dir_fila.exists():
+                        if not mkv_path.is_file() or mkv_path.suffix.lower() not in VIDEO_EXTENSIONS:
                             continue
 
-                        for mkv_path in sorted(dir_fila.iterdir()):
-                            if self._stop_event.is_set():
-                                break
-                            if not mkv_path.is_file() or mkv_path.suffix.lower() not in VIDEO_EXTENSIONS:
+                        transcript_json = _resolve_transcript_json(mkv_path, pre_dir)
+                        # Se modo de transcrição for automático, aguarda o Whisper concluir antes de analisar.
+                        # Regra: se não há transcrição ainda, só avança se o JOB_MGR não estiver rodando
+                        # (i.e., Whisper terminou ou nunca foi disparado) E o arquivo já é antigo o suficiente.
+                        modo_tr = str(padroes.get("modo_transcricao", "automatico")).lower()
+                        if modo_tr == "automatico" and transcript_json is None:
+                            # Se há um job rodando (Whisper provavelmente), aguarda sem timeout
+                            if JOB_MGR.snapshot()["running"]:
+                                continue
+                            # Sem job rodando: aguarda pelo menos 60s após o arquivo parar de ser escrito
+                            # para garantir que o gravador fechou o segmento antes de analisar
+                            try:
+                                age = time.time() - mkv_path.stat().st_mtime
+                            except OSError:
+                                age = 0
+                            if age < 60:
                                 continue
 
-                            transcript_json = _resolve_transcript_json(mkv_path, pre_dir)
-                            # Se modo de transcrição for automático, aguarda o Whisper concluir antes de analisar.
-                            # Regra: se não há transcrição ainda, só avança se o JOB_MGR não estiver rodando
-                            # (i.e., Whisper terminou ou nunca foi disparado) E o arquivo já é antigo o suficiente.
-                            modo_tr = str(padroes.get("modo_transcricao", "automatico")).lower()
-                            if modo_tr == "automatico" and transcript_json is None:
-                                # Se há um job rodando (Whisper provavelmente), aguarda sem timeout
-                                if JOB_MGR.snapshot()["running"]:
-                                    continue
-                                # Sem job rodando: aguarda pelo menos 60s após o arquivo parar de ser escrito
-                                # para garantir que o gravador fechou o segmento antes de analisar
-                                try:
-                                    age = time.time() - mkv_path.stat().st_mtime
-                                except OSError:
-                                    age = 0
-                                if age < 60:
-                                    continue
+                        marker_file = ch_paths["root"] / "marcadores_automaticos" / f"{mkv_path.stem}.json"
+                        # Reanalize if: transcript is now available but the previous analysis was audio-only
+                        # (text_score == 0 means Whisper hadn't run yet when the marker was written).
+                        should_reanalyze = False
+                        if marker_file.exists():
+                            try:
+                                old_m = json.loads(marker_file.read_text(encoding="utf-8"))
+                                was_audio_only = old_m.get("text_score", 0) == 0 and old_m.get("ai_score") is None
+                                if transcript_json is not None and was_audio_only:
+                                    should_reanalyze = True
+                            except Exception:
+                                pass
 
-                            marker_file = ch_paths["root"] / "marcadores_automaticos" / f"{mkv_path.stem}.json"
-                            # Reanalize if: transcript is now available but the previous analysis was audio-only
-                            # (text_score == 0 means Whisper hadn't run yet when the marker was written).
-                            should_reanalyze = False
-                            if marker_file.exists():
-                                try:
-                                    old_m = json.loads(marker_file.read_text(encoding="utf-8"))
-                                    was_audio_only = old_m.get("text_score", 0) == 0 and old_m.get("ai_score") is None
-                                    if transcript_json is not None and was_audio_only:
-                                        should_reanalyze = True
-                                except Exception:
-                                    pass
+                        out_base_check = (
+                            Path(custom_output) / ch_name / "clips_automaticos"
+                            if custom_output
+                            else ch_paths["05_cortes_extraidos"] / f"auto_{mkv_path.stem}"
+                        )
+                        has_clips = out_base_check.exists() and any(out_base_check.glob("*.mp4"))
 
-                            if should_reanalyze:
-                                self._processed.discard(str(mkv_path))
-                            elif marker_file.exists() or str(mkv_path) in self._processed:
-                                continue
+                        if should_reanalyze:
+                            self._processed.discard(str(mkv_path))
+                        elif marker_file.exists() and has_clips:
+                            continue
+                        elif str(mkv_path) in self._processed and has_clips:
+                            continue
 
-                            self._processed.add(str(mkv_path))
+                        self._processed.add(str(mkv_path))
+                        entry, _ = _find_channel_entry(ch_name)
+                        canal_jogo = str(entry.get("jogo") or "auto").strip().lower() if entry else "auto"
+                        canal_url = str(entry.get("url") or "") if entry else ""
+                        if canal_jogo in ("auto", "") and canal_url:
+                            cat_info = detect_stream_category(canal_url)
+                            resolved_jogo = cat_info.get("tag") or "geral"
+                        else:
+                            resolved_jogo = canal_jogo
+
+                        if marker_file.exists() and not should_reanalyze:
+                            try:
+                                analysis = json.loads(marker_file.read_text(encoding="utf-8"))
+                            except Exception:
+                                append_log("AUTO-CLIP", f"Analisando momentos: {ch_name}/{mkv_path.name}...", channel=ch_name)
+                                analysis = analyze_block(ch_name, mkv_path, transcript_json, ch_config, jogo=resolved_jogo)
+                                save_auto_markers(ch_name, mkv_path.stem, analysis)
+                        else:
                             append_log("AUTO-CLIP", f"Analisando momentos: {ch_name}/{mkv_path.name}...", channel=ch_name)
-                            entry, _ = _find_channel_entry(ch_name)
-                            canal_jogo = str(entry.get("jogo") or "auto").strip().lower() if entry else "auto"
-                            canal_url = str(entry.get("url") or "") if entry else ""
-                            if canal_jogo in ("auto", "") and canal_url:
-                                cat_info = detect_stream_category(canal_url)
-                                resolved_jogo = cat_info.get("tag") or "geral"
-                            else:
-                                resolved_jogo = canal_jogo
-                            analysis = analyze_block(ch_name, mkv_path, transcript_json, padroes, jogo=resolved_jogo)
+                            analysis = analyze_block(ch_name, mkv_path, transcript_json, ch_config, jogo=resolved_jogo)
                             save_auto_markers(ch_name, mkv_path.stem, analysis)
 
-                            score = float(analysis.get("score", 0.0))
-                            momentos = analysis.get("momentos", [])
-                            append_log("AUTO-CLIP", f"[{ch_name}] Score: {score:.0f}/100 | Momentos: {len(momentos)}", channel=ch_name)
+                        score = float(analysis.get("score", 0.0))
+                        momentos = analysis.get("momentos", [])
+                        append_log("AUTO-CLIP", f"[{ch_name}] Score: {score:.0f}/100 | Momentos: {len(momentos)}", channel=ch_name)
 
-                            # Extrai clips se ha momentos detectados, independente do score global.
-                            # O score global e um indicador; os picos individuais ja foram filtrados em auto_clip.py.
-                            best_m_score = max((float(m.get("score", 0)) for m in momentos), default=0.0)
-                            if momentos and best_m_score >= min_score / 2:
-                                if custom_output:
-                                    out_base = Path(custom_output) / ch_name / "clips_automaticos"
-                                else:
-                                    out_base = ch_paths["05_cortes_extraidos"] / f"auto_{mkv_path.stem}"
-                                out_base.mkdir(parents=True, exist_ok=True)
+                        # Extrai clips se ha momentos detectados, independente do score global.
+                        # O score global e um indicador; os picos individuais ja foram filtrados em auto_clip.py.
+                        best_m_score = max((float(m.get("score", 0)) for m in momentos), default=0.0)
+                        if momentos and best_m_score >= min_score / 2:
+                            if custom_output:
+                                out_base = Path(custom_output) / ch_name / "clips_automaticos"
+                            else:
+                                out_base = ch_paths["05_cortes_extraidos"] / f"auto_{mkv_path.stem}"
+                            out_base.mkdir(parents=True, exist_ok=True)
 
-                                try:
-                                    dur_video = float(probe_video(mkv_path)["duration"])
-                                    cortes_feitos = 0
-                                    top_momentos = select_top_momentos(momentos, max_clips=5, min_distance_sec=35.0)
-                                    for idx, m in enumerate(top_momentos, start=1):
-                                        center = float(m.get("segundo", 0))
-                                        inicio = max(0.0, center - 12.0)
-                                        dur_corte = min(dur_video - inicio, 30.0)
-                                        if dur_corte <= 2.0:
-                                            continue
-                                        desc = str(m.get("descricao") or f"momento_{idx}")
-                                        slug = _slugify(desc, max_len=36)
-                                        clip_file = out_base / f"{idx:02d}_{slug}_{int(center)}s.mp4"
-                                        _cortar_trecho(mkv_path, clip_file, inicio, dur_corte, modo_copia=False, encoder="auto", channel=ch_name)
+                            try:
+                                dur_video = float(probe_video(mkv_path)["duration"])
+                                cortes_feitos = 0
+                                top_momentos = select_top_momentos(momentos, max_clips=5, min_distance_sec=35.0)
+                                for idx, m in enumerate(top_momentos, start=1):
+                                    center = float(m.get("segundo", 0))
+                                    inicio = max(0.0, center - 12.0)
+                                    dur_corte = min(dur_video - inicio, 30.0)
+                                    if dur_corte <= 2.0:
+                                        continue
+                                    desc = str(m.get("descricao") or f"momento_{idx}")
+                                    slug = _slugify(desc, max_len=36)
+                                    clip_file = out_base / f"{idx:02d}_{slug}_{int(center)}s.mp4"
+                                    _cortar_trecho(mkv_path, clip_file, inicio, dur_corte, modo_copia=False, encoder="auto", channel=ch_name)
 
-                                        # Resolve transcript at cut time — file may have been moved to a batch folder
-                                        tr_at_cut = _resolve_transcript_json(mkv_path, pre_dir)
-                                        try:
-                                            if tr_at_cut is not None and tr_at_cut.exists():
-                                                raw_tr = json.loads(tr_at_cut.read_text(encoding="utf-8"))
-                                                segs = raw_tr if isinstance(raw_tr, list) else raw_tr.get("segments", [])
-                                                gerar_srt_trecho(segs, inicio, dur_corte, clip_file.with_suffix(".srt"))
-                                        except Exception:
-                                            pass
+                                    # Resolve transcript at cut time — file may have been moved to a batch folder
+                                    tr_at_cut = _resolve_transcript_json(mkv_path, pre_dir)
+                                    try:
+                                        if tr_at_cut is not None and tr_at_cut.exists():
+                                            raw_tr = json.loads(tr_at_cut.read_text(encoding="utf-8"))
+                                            segs = raw_tr if isinstance(raw_tr, list) else raw_tr.get("segments", [])
+                                            gerar_srt_trecho(segs, inicio, dur_corte, clip_file.with_suffix(".srt"))
+                                    except Exception:
+                                        pass
 
-                                        append_log("AUTO-CLIP", f"★ Clip e legenda (.srt) extraídos ({format_mmss(inicio)} -> {format_mmss(inicio+dur_corte)}): {clip_file.name}", channel=ch_name)
-                                        cortes_feitos += 1
+                                    append_log("AUTO-CLIP", f"★ Clip e legenda (.srt) extraídos ({format_mmss(inicio)} -> {format_mmss(inicio+dur_corte)}): {clip_file.name}", channel=ch_name)
+                                    cortes_feitos += 1
 
-                                    deletar_bloco = _limpar_fila_apos_clip(entry, padroes)
-                                    # Only delete the source block if the clip was made WITH transcript context.
-                                    # Without a transcript the auto-clip result is audio-only and may be poor quality;
-                                    # keeping the file allows a re-analysis once Whisper finishes.
-                                    had_transcript = transcript_json is not None
-                                    if deletar_bloco and cortes_feitos > 0 and had_transcript:
-                                        try:
-                                            mkv_path.unlink(missing_ok=True)
-                                            append_log("AUTO-CLIP", f"Bloco da fila (02_para_processar) removido para economizar espaço: {mkv_path.name}", channel=ch_name)
-                                        except Exception as del_err:
-                                            append_log("AUTO-CLIP", f"Aviso ao remover bloco da fila: {del_err}", channel=ch_name)
-                                except Exception as exc:
-                                    append_log("AUTO-CLIP", f"Aviso ao cortar clip: {exc}", channel=ch_name)
+                                deletar_bloco = bool((entry or {}).get("deletar_bloco_apos_clip", False))
+                                # Only delete the source block if the clip was made WITH transcript context.
+                                # Without a transcript the auto-clip result is audio-only and may be poor quality;
+                                # keeping the file allows a re-analysis once Whisper finishes.
+                                had_transcript = transcript_json is not None
+                                if deletar_bloco and cortes_feitos > 0 and had_transcript:
+                                    try:
+                                        mkv_path.unlink(missing_ok=True)
+                                        append_log("AUTO-CLIP", f"Bloco da fila (02_para_processar) removido para economizar espaço: {mkv_path.name}", channel=ch_name)
+                                    except Exception as del_err:
+                                        append_log("AUTO-CLIP", f"Aviso ao remover bloco da fila: {del_err}", channel=ch_name)
+                            except Exception as exc:
+                                append_log("AUTO-CLIP", f"Aviso ao cortar clip: {exc}", channel=ch_name)
 
             except Exception as exc:
-                append_log("AUTO-CLIP", f"Erro no auto-clip: {exc}", channel=ch_name)
+                append_log("AUTO-CLIP", f"Erro no auto-clip: {exc}", channel=ch_name if 'ch_name' in locals() else "")
 
             self._wake_event.wait(6.0)
             self._wake_event.clear()
@@ -871,9 +965,37 @@ def build_state_payload() -> dict[str, Any]:
                 "plataforma": _detect_platform(url),
                 "ativo": bool((entry or {}).get("ativo", False)),
                 "jogo": str((entry or {}).get("jogo") or "auto").strip().lower(),
-                "deletar_bloco_apos_clip": _limpar_fila_apos_clip(entry, padroes),
+                "deletar_bloco_apos_clip": bool((entry or {}).get("deletar_bloco_apos_clip", False)),
                 "categoria_detectada": cat_info.get("raw", ""),
                 "tag_detectada": cat_info.get("tag", "geral"),
+                "modo_transcricao": str(
+                    (entry or {}).get("modo_transcricao")
+                    or padroes.get("modo_transcricao", DEFAULT_TRANSCRIPTION_MODE)
+                ),
+                "modo_corte": str(
+                    (entry or {}).get("modo_corte")
+                    or ("automatico" if (entry or {}).get("modo_analise") == "automatico" else None)
+                    or padroes.get("modo_corte")
+                    or ("automatico" if padroes.get("modo_analise") == "automatico" else "manual")
+                ),
+                "modo_lote": str(
+                    (entry or {}).get("modo_lote") or padroes.get("modo_lote", "manual")
+                ),
+                "ai_backend": str(
+                    (entry or {}).get("ai_backend") or padroes.get("ai_backend", DEFAULT_AI_BACKEND)
+                ),
+                "ai_local_url": str(
+                    (entry or {}).get("ai_local_url") or padroes.get("ai_local_url", "http://localhost:11434")
+                ),
+                "ai_modelo": str(
+                    (entry or {}).get("ai_modelo") or padroes.get("ai_modelo", "gemma3:4b")
+                ),
+                "ai_api_url": str(
+                    (entry or {}).get("ai_api_url") or padroes.get("ai_api_url", "")
+                ),
+                "ai_api_key": str(
+                    (entry or {}).get("ai_api_key") or padroes.get("ai_api_key", "")
+                ),
                 "duracao_bloco_minutos": int(
                     (entry or {}).get(
                         "duracao_bloco_minutos",
@@ -905,6 +1027,11 @@ def build_state_payload() -> dict[str, Any]:
         "diretorio_canais_efetivo": str(get_canais_dir()),
         "padroes": {
             "modo_transcricao": padroes.get("modo_transcricao", DEFAULT_TRANSCRIPTION_MODE),
+            "modo_corte": padroes.get(
+                "modo_corte",
+                "automatico" if padroes.get("modo_analise") == "automatico" else "manual",
+            ),
+            "modo_lote": padroes.get("modo_lote", "manual"),
             "modo_analise": padroes.get("modo_analise", DEFAULT_ANALYSIS_MODE),
             "ai_backend": padroes.get("ai_backend", DEFAULT_AI_BACKEND),
             "ai_api_url": padroes.get("ai_api_url", ""),
@@ -922,7 +1049,7 @@ def build_state_payload() -> dict[str, Any]:
         "canais": canais_out,
         "recording_active_count": RECORDER_MGR.active_count(),
         "job": JOB_MGR.snapshot(),
-        "logs": get_logs([canal["nome"] for canal in canais_out]),
+        "logs": get_logs_payload([c["nome"] for c in canais_out], 150),
         "server_info": {
             "port": PORT,
             "url_local": f"http://127.0.0.1:{PORT}",
@@ -1030,7 +1157,7 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Parâmetro 'channel' obrigatório."})
                     return
                 safe = sanitize_channel_name(raw_ch)
-                channel_dir = CANAIS_DIR / safe
+                channel_dir = get_canais_dir() / safe
                 estado_path = channel_dir / "estado_live.md"
                 estado_text = (
                     estado_path.read_text(encoding="utf-8")
@@ -1167,11 +1294,7 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                 self._handle_ollama_install()
                 return
             if path == "/api/logs/clear":
-                channel = str(body.get("channel") or "").strip()
-                if not channel:
-                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Informe o canal."})
-                    return
-                clear_logs(sanitize_channel_name(channel))
+                clear_logs(str(body.get("channel") or ""))
                 self._send_json(HTTPStatus.OK, {"ok": True})
                 return
             if path == "/api/shutdown":
@@ -1212,6 +1335,8 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                 ),
                 "qualidade": str(ch.get("qualidade") or cfg["padroes"].get("qualidade", DEFAULT_QUALITY)),
             }
+            if "jogo" in ch:
+                novo_item["jogo"] = str(ch["jogo"]).strip().lower()
             cookies = str(ch.get("cookies") or "").strip()
             if cookies or _detect_platform(url) == "youtube":
                 novo_item["cookies"] = cookies
@@ -1224,9 +1349,7 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             for idx, existing in enumerate(canais):
                 ex_name = sanitize_channel_name(str(existing.get("nome") or ""))
                 if ex_name in (original_safe, nome):
-                    if "deletar_bloco_apos_clip" not in ch:
-                        novo_item["deletar_bloco_apos_clip"] = _limpar_fila_apos_clip(existing, cfg["padroes"])
-                    if "jogo" in existing:
+                    if "jogo" not in novo_item and "jogo" in existing:
                         novo_item["jogo"] = existing["jogo"]
                     canais[idx] = novo_item
                     replaced = True
@@ -1244,61 +1367,89 @@ class StreamAppHandler(BaseHTTPRequestHandler):
     def _handle_settings(self, body: dict[str, Any]) -> None:
         cfg = load_channels_config()
         padroes = cfg.setdefault("padroes", {})
+        channel_name = body.get("channel")
+        target_dict: dict[str, Any]
+        channel_safe: str = ""
 
-        # --- Transcrição ---
+        if channel_name and str(channel_name).strip().lower() not in ("padroes", "global", "todos"):
+            channel_safe = sanitize_channel_name(str(channel_name))
+            found_entry = None
+            for c in cfg.setdefault("canais", []):
+                if isinstance(c, dict) and sanitize_channel_name(str(c.get("nome", ""))) == channel_safe:
+                    found_entry = c
+                    break
+            if found_entry is None:
+                found_entry = {"nome": channel_name}
+                cfg["canais"].append(found_entry)
+            target_dict = found_entry
+            log_prefix = f"[{channel_safe}] "
+        else:
+            target_dict = padroes
+            log_prefix = "[Padrão] "
+
+        # --- Transcrição (Whisper) ---
         modo = body.get("modo_transcricao")
         if modo is not None:
             modo_norm = str(modo).strip().lower()
-            if modo_norm not in ("manual", "automatico"):
-                self._send_json(
-                    HTTPStatus.BAD_REQUEST,
-                    {"error": "modo_transcricao inválido. Use 'manual' ou 'automatico'."},
-                )
-                return
-            padroes["modo_transcricao"] = modo_norm
-            append_log("APP", f"Modo de transcrição alterado para: {modo_norm}.")
-            if modo_norm == "automatico":
-                AUTO_TRANSCRIBE.wake()
+            if modo_norm in ("manual", "automatico", "desativado"):
+                target_dict["modo_transcricao"] = modo_norm
+                append_log("APP", f"{log_prefix}Modo de transcrição: {modo_norm}.", channel=channel_safe or None)
+                if modo_norm == "automatico":
+                    AUTO_TRANSCRIBE.wake()
 
-        # --- Análise automática de momentos ---
+        # --- Criação de Cortes (Clipes) ---
+        modo_corte = body.get("modo_corte")
+        if modo_corte is not None:
+            modo_corte_norm = str(modo_corte).strip().lower()
+            if modo_corte_norm in ("manual", "automatico", "desativado"):
+                target_dict["modo_corte"] = modo_corte_norm
+                target_dict["modo_analise"] = "automatico" if modo_corte_norm == "automatico" else "blocos"
+                append_log("APP", f"{log_prefix}Criação de cortes: {modo_corte_norm}.", channel=channel_safe or None)
+                if modo_corte_norm == "automatico":
+                    AUTO_CLIP.wake()
+
+        # --- Preparação de Lotes (Premiere) ---
+        modo_lote = body.get("modo_lote")
+        if modo_lote is not None:
+            modo_lote_norm = str(modo_lote).strip().lower()
+            if modo_lote_norm in ("manual", "automatico", "desativado"):
+                target_dict["modo_lote"] = modo_lote_norm
+                append_log("APP", f"{log_prefix}Preparação de lotes: {modo_lote_norm}.", channel=channel_safe or None)
+
+        # Suporte legado para modo_analise
         modo_analise = body.get("modo_analise")
         if modo_analise is not None:
             modo_analise_norm = str(modo_analise).strip().lower()
-            if modo_analise_norm not in ("blocos", "automatico"):
-                self._send_json(
-                    HTTPStatus.BAD_REQUEST,
-                    {"error": "modo_analise inválido. Use 'blocos' ou 'automatico'."},
-                )
-                return
-            padroes["modo_analise"] = modo_analise_norm
-            append_log("APP", f"Modo de análise alterado para: {modo_analise_norm}.")
+            if modo_analise_norm in ("blocos", "automatico"):
+                target_dict["modo_analise"] = modo_analise_norm
+                target_dict["modo_corte"] = "automatico" if modo_analise_norm == "automatico" else "manual"
+                append_log("APP", f"{log_prefix}Modo de análise: {modo_analise_norm}.", channel=channel_safe or None)
 
         # --- AI backend ---
         ai_backend = body.get("ai_backend")
         if ai_backend is not None:
             ai_backend_norm = str(ai_backend).strip().lower()
-            if ai_backend_norm not in ("desabilitado", "api", "local", "local_custom"):
-                self._send_json(
-                    HTTPStatus.BAD_REQUEST,
-                    {"error": "ai_backend inválido. Use 'desabilitado', 'api', 'local' ou 'local_custom'."},
-                )
-                return
-            padroes["ai_backend"] = ai_backend_norm
-            append_log("APP", f"AI backend alterado para: {ai_backend_norm}.")
+            if ai_backend_norm in ("desabilitado", "api", "local", "local_custom"):
+                target_dict["ai_backend"] = ai_backend_norm
+                append_log("APP", f"{log_prefix}AI backend: {ai_backend_norm}.", channel=channel_safe or None)
 
         for key in ("ai_api_url", "ai_api_key", "ai_modelo", "ai_local_url"):
             if body.get(key) is not None:
-                padroes[key] = str(body[key]).strip()
+                target_dict[key] = str(body[key]).strip()
 
         if body.get("auto_clip_min_score") is not None:
             score = int(body["auto_clip_min_score"])
-            padroes["auto_clip_min_score"] = max(0, min(100, score))
+            target_dict["auto_clip_min_score"] = max(0, min(100, score))
 
         if body.get("deletar_bloco_apos_clip") is not None:
-            padroes["deletar_bloco_apos_clip"] = bool(body["deletar_bloco_apos_clip"])
-            append_log("APP", f"Deletar bloco da fila pós-clip: {'Ativado' if padroes['deletar_bloco_apos_clip'] else 'Desativado'}")
+            target_dict["deletar_bloco_apos_clip"] = bool(body["deletar_bloco_apos_clip"])
+            append_log(
+                "APP",
+                f"{log_prefix}Limpar fila pós-clip: {'Ativado' if target_dict['deletar_bloco_apos_clip'] else 'Desativado'}",
+                channel=channel_safe or None,
+            )
 
-        # --- Pasta de canais / gravações ---
+        # --- Pasta de canais / gravações (sempre global) ---
         if body.get("diretorio_canais") is not None:
             raw_dir = str(body["diretorio_canais"]).strip()
             if raw_dir and not Path(raw_dir).exists():
@@ -1311,7 +1462,7 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                     )
                     return
             padroes["diretorio_canais"] = raw_dir
-            append_log("APP", f"Diretório de canais configurado: {raw_dir or '(padrão: canais/ no projeto)'}")
+            append_log("APP", f"Diretório de canais: {raw_dir or '(canais/ no projeto)'}")
 
         # --- Pasta de saída de cortes ---
         if body.get("output_dir") is not None:
@@ -1325,17 +1476,17 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                         {"error": f"Não foi possível criar output_dir: {exc}"},
                     )
                     return
-            padroes["output_dir"] = raw_dir
-            append_log("APP", f"Pasta de saída configurada: {raw_dir or '(padrão)'}")
+            target_dict["output_dir"] = raw_dir
+            append_log("APP", f"{log_prefix}Pasta de saída: {raw_dir or '(padrão)'}", channel=channel_safe or None)
 
         # --- Gravação ---
         if body.get("duracao_bloco_minutos") is not None:
-            padroes["duracao_bloco_minutos"] = max(1, int(body["duracao_bloco_minutos"]))
+            target_dict["duracao_bloco_minutos"] = max(1, int(body["duracao_bloco_minutos"]))
         if body.get("qualidade") is not None:
-            padroes["qualidade"] = str(body["qualidade"]).strip() or DEFAULT_QUALITY
+            target_dict["qualidade"] = str(body["qualidade"]).strip() or DEFAULT_QUALITY
 
         _save_channels_config(cfg)
-        self._send_json(HTTPStatus.OK, {"ok": True, "padroes": padroes})
+        self._send_json(HTTPStatus.OK, {"ok": True, "target": channel_safe or "padroes"})
 
     def _handle_channels_delete(self, body: dict[str, Any]) -> None:
         nome = sanitize_channel_name(str(body.get("channel") or ""))
@@ -1541,7 +1692,7 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                                 cortes_total += 1
                                 cortes_bloco += 1
 
-                            deletar_bloco = _limpar_fila_apos_clip(entry, padroes)
+                            deletar_bloco = bool((entry or {}).get("deletar_bloco_apos_clip", False))
                             if deletar_bloco and cortes_bloco > 0 and not is_from_lote and not cancel_ev.is_set():
                                 try:
                                     mkv_path.unlink(missing_ok=True)
