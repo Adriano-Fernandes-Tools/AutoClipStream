@@ -1472,7 +1472,7 @@ function renderLogs() {
   }
 
   if (!logs.length) {
-    consoleEl.innerHTML = '<div style="color:var(--text-dim)">Nenhum log nesta sessão ainda.</div>';
+    consoleEl.innerHTML = '<div style="color:var(--text-dim)">Nenhum evento deste canal nesta sessão.</div>';
     return;
   }
   consoleEl.innerHTML = logs.map(l => `
@@ -1793,7 +1793,7 @@ function switchTab(tab) {
 async function refreshState() {
   try {
     const prevSelected = state.selectedChannel;
-    const prevLogsLen = state.data?.logs?.length || 0;
+    const prevLogs = state.data?.logs;
     const prevJobRunning = Boolean(state.data?.job?.running);
     const data = await api('/api/state');
     state.data = data;
