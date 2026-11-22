@@ -109,6 +109,7 @@ def _transcrever_video(
         language=language,
         beam_size=WHISPER_BEAM_SIZE,
         condition_on_previous_text=False,
+        word_timestamps=True,
         vad_filter=VAD_ENABLED,
         vad_parameters={
             "min_silence_duration_ms": VAD_MIN_SILENCE_MS,
@@ -120,10 +121,16 @@ def _transcrever_video(
     for seg in raw_segments:
         txt = _limpar_alucinacoes(seg.text.strip())
         if txt:
+            if getattr(seg, "words", None) and seg.words:
+                s_start = round(float(seg.words[0].start), 2)
+                s_end = round(float(seg.words[-1].end), 2)
+            else:
+                s_start = round(float(seg.start), 2)
+                s_end = round(float(seg.end), 2)
             segmentos.append(
                 {
-                    "start": round(float(seg.start), 2),
-                    "end": round(float(seg.end), 2),
+                    "start": s_start,
+                    "end": s_end,
                     "text": txt,
                 }
             )
@@ -438,29 +445,127 @@ def pre_transcrever_arquivos(
     return concluidos
 
 
+def parse_srt_to_segments(srt_path: Path) -> list[dict[str, Any]]:
+    """Converte arquivo .srt existente em lista de segmentos Whisper."""
+    if not srt_path.exists():
+        return []
+    try:
+        content = srt_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return []
+    segments: list[dict[str, Any]] = []
+    time_re = re.compile(
+        r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})"
+    )
+    blocks = re.split(r"\n\s*\n", content.strip())
+    for block in blocks:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if len(lines) < 2:
+            continue
+        match = None
+        text_lines: list[str] = []
+        for i, line in enumerate(lines):
+            m = time_re.search(line)
+            if m:
+                match = m
+                text_lines = lines[i + 1:]
+                break
+        if match:
+            h1, m1, s1, ms1, h2, m2, s2, ms2 = map(int, match.groups())
+            start_sec = h1 * 3600 + m1 * 60 + s1 + ms1 / 1000.0
+            end_sec = h2 * 3600 + m2 * 60 + s2 + ms2 / 1000.0
+            text = " ".join(text_lines).strip()
+            if text:
+                segments.append(
+                    {
+                        "start": round(start_sec, 2),
+                        "end": round(end_sec, 2),
+                        "text": text,
+                    }
+                )
+    return segments
+
+
 def _carregar_pre_transcricao(
     pre_dir: Path, video_path: Path, language: str | None
 ) -> tuple[list[dict[str, Any]], str] | None:
     """Tenta reaproveitar cache de pré-transcrição de 02_para_processar/_pre_transcricoes/."""
     pre_json = pre_dir / f"{video_path.stem}.json"
     pre_srt = pre_dir / f"{video_path.stem}.srt"
-    if not pre_json.exists():
-        return None
-    try:
-        data = json.loads(pre_json.read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or not isinstance(data.get("segments"), list):
-            return None
-        cached_size = data.get("tamanho_bytes")
-        if cached_size is not None and int(cached_size) != video_path.stat().st_size:
-            return None
-        segmentos = data["segments"]
-        idioma = str(data.get("language") or language or "desconhecido")
-    except Exception:
-        return None
+    if pre_json.exists():
+        try:
+            data = json.loads(pre_json.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("segments"), list):
+                segmentos = data["segments"]
+                idioma = str(data.get("language") or language or "pt")
+                if segmentos:
+                    return segmentos, idioma
+        except Exception:
+            pass
 
-    pre_json.unlink(missing_ok=True)
-    pre_srt.unlink(missing_ok=True)
-    return segmentos, idioma
+    if pre_srt.exists():
+        parsed = parse_srt_to_segments(pre_srt)
+        if parsed:
+            return parsed, language or "pt"
+
+    return None
+
+
+def _buscar_transcricao_existente(
+    channel_paths: dict[str, Path],
+    video_path: Path,
+    language: str | None,
+) -> tuple[list[dict[str, Any]], str] | None:
+    """Busca exaustivamente se este vídeo já foi transcrito antes em qualquer pasta do canal."""
+    stem = video_path.stem
+    dir_entrada = channel_paths.get("02_para_processar")
+    if dir_entrada:
+        pre_dir = dir_entrada / PRE_TRANSCRICOES_DIRNAME
+        res = _carregar_pre_transcricao(pre_dir, video_path, language)
+        if res is not None:
+            return res
+
+    parent_pre = video_path.parent / PRE_TRANSCRICOES_DIRNAME
+    if parent_pre.exists():
+        res = _carregar_pre_transcricao(parent_pre, video_path, language)
+        if res is not None:
+            return res
+
+    canal_root = channel_paths.get("root", video_path.parent.parent)
+    candidatos_busca = [
+        canal_root / "03_em_processamento",
+        canal_root / "04_para_edicao",
+        canal_root / "_historico_lotes",
+    ]
+    for pasta_base in candidatos_busca:
+        if not pasta_base.exists():
+            continue
+        # Busca em pastas de transcricoes de cada lote existente
+        for srt_cand in pasta_base.glob(f"*/transcricoes/{stem}.srt"):
+            if srt_cand.is_file():
+                parsed = parse_srt_to_segments(srt_cand)
+                if parsed:
+                    return parsed, language or "pt"
+        for json_cand in pasta_base.glob(f"*/transcricoes/{stem}.json"):
+            if json_cand.is_file():
+                try:
+                    data = json.loads(json_cand.read_text(encoding="utf-8"))
+                    if isinstance(data, dict) and isinstance(data.get("segments"), list) and data["segments"]:
+                        return data["segments"], str(data.get("language") or language or "pt")
+                except Exception:
+                    pass
+
+    # Verifica marcadores automáticos salvos
+    marker_auto = canal_root / "marcadores_automaticos" / f"{stem}.json"
+    if marker_auto.exists():
+        try:
+            m_data = json.loads(marker_auto.read_text(encoding="utf-8"))
+            if isinstance(m_data, dict) and isinstance(m_data.get("segments"), list) and m_data["segments"]:
+                return m_data["segments"], str(m_data.get("language") or language or "pt")
+        except Exception:
+            pass
+
+    return None
 
 
 def preparar_canal(
@@ -532,13 +637,12 @@ def preparar_canal(
         idioma_detectado = language or "desconhecido"
 
         if not sem_whisper:
-            pre_dir = dir_entrada / PRE_TRANSCRICOES_DIRNAME
-            reaproveitado = _carregar_pre_transcricao(pre_dir, video_path, language)
+            reaproveitado = _buscar_transcricao_existente(paths, video_path, language)
             if reaproveitado is not None:
                 segmentos, idioma_detectado = reaproveitado
                 print(
-                    f"  Whisper: pré-transcrição reaproveitada "
-                    f"({len(segmentos)} fala(s) | idioma: {idioma_detectado})"
+                    f"  Whisper: transcrição existente reaproveitada com sucesso "
+                    f"({len(segmentos)} fala(s) | idioma: {idioma_detectado}) - Whisper evitado!"
                 )
             elif num_audios == 0:
                 print("  [AVISO] Vídeo sem faixa de áudio; pulando Whisper.")

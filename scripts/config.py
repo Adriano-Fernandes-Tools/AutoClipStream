@@ -113,6 +113,8 @@ VIDEO_EXTENSIONS: tuple[str, ...] = (".mkv", ".mp4", ".ts", ".mov")
 
 # Modo de análise: "blocos" (manual, acumula blocos) ou "automatico" (processa assim que fecha)
 DEFAULT_ANALYSIS_MODE = "blocos"
+DEFAULT_MODO_CORTE = "automatico"
+DEFAULT_MODO_LOTE = "manual"
 
 # Backend de AI: "desabilitado", "api" (OpenAI-compatible) ou "local" (Ollama)
 DEFAULT_AI_BACKEND = "desabilitado"
@@ -147,7 +149,7 @@ WHISPER_BEAM_SIZE = 5
 WHISPER_LANGUAGE: str | None = "pt"
 VAD_ENABLED = True
 VAD_MIN_SILENCE_MS = 500
-VAD_SPEECH_PAD_MS = 400
+VAD_SPEECH_PAD_MS = 200
 
 FILTRAR_ALUCINACOES = True
 ALUCINACOES_WHISPER: tuple[str, ...] = (

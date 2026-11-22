@@ -879,22 +879,42 @@ details.resumo-box pre {
       <button id="btnNewChannel" class="btn btn-primary btn-sm btn-wide">+ Novo canal</button>
     </div>
 
-    <div class="mode-box">
-      <label class="side-label" style="padding:0;" for="modoTranscricaoSelect">Transcrição (Whisper)</label>
-      <select id="modoTranscricaoSelect">
-        <option value="manual">Manual (só quando eu pedir)</option>
-        <option value="automatico">Automático (a cada bloco de 10m)</option>
-      </select>
-      <div id="modoTranscricaoHint" class="mode-hint">GPU livre durante a gravação</div>
+    <!-- Banner de contexto de canal para as configurações laterais -->
+    <div id="sideChannelBanner" style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;margin-bottom:8px;background:rgba(255,255,255,0.03);border:1px solid var(--hairline);border-radius:6px;font-size:11px;">
+      <span style="font-weight:600;display:flex;align-items:center;gap:4px;color:var(--text);">
+        <span>⚙️</span> <span id="sideChannelLabel">Config. Canal:</span>
+      </span>
+      <span id="sideChannelBadge" class="badge badge-purple" style="font-size:9.5px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Padrão</span>
     </div>
 
     <div class="mode-box">
-      <label class="side-label" style="padding:0;" for="modoAnaliseSelect">Modo de Análise</label>
-      <select id="modoAnaliseSelect">
-        <option value="blocos">Em blocos (Manual)</option>
-        <option value="automatico">Automático (Corta ao vivo)</option>
+      <label class="side-label" style="padding:0;" for="modoTranscricaoSelect">Transcrição (Whisper)</label>
+      <select id="modoTranscricaoSelect">
+        <option value="automatico">Automático (ao fechar bloco)</option>
+        <option value="manual">Manual (só quando eu pedir)</option>
+        <option value="desativado">Desativado</option>
       </select>
-      <div id="modoAnaliseHint" class="mode-hint">Acumula lotes para você pedir a análise</div>
+      <div id="modoTranscricaoHint" class="mode-hint">Pré-transcreve cada bloco ao fechar</div>
+    </div>
+
+    <div class="mode-box">
+      <label class="side-label" style="padding:0;" for="modoCorteSelect">Criação de Cortes (Clipes)</label>
+      <select id="modoCorteSelect">
+        <option value="automatico">Automático (Corta ao vivo ao fechar)</option>
+        <option value="manual">Manual (Gera clipes sob demanda)</option>
+        <option value="desativado">Desativado</option>
+      </select>
+      <div id="modoCorteHint" class="mode-hint">Analisa e extrai clipes MP4 automaticamente</div>
+    </div>
+
+    <div class="mode-box">
+      <label class="side-label" style="padding:0;" for="modoLoteSelect">Preparação de Lote (Premiere)</label>
+      <select id="modoLoteSelect">
+        <option value="manual">Manual (Prepara lote sob demanda)</option>
+        <option value="automatico">Automático (Prepara lote ao fechar)</option>
+        <option value="desativado">Desativado</option>
+      </select>
+      <div id="modoLoteHint" class="mode-hint">Prepara lote para edição apenas quando acionado</div>
     </div>
 
     <div class="mode-box">
@@ -933,6 +953,15 @@ details.resumo-box pre {
         <input id="inputApiModel" type="text" placeholder="gpt-4o-mini ou gemini-2.0-flash" style="height:26px;padding:0 6px;border-radius:4px;border:1px solid var(--hairline-strong);background:var(--bg-input);color:var(--text);font-size:10.5px;">
         <button id="btnSaveApiSettings" class="btn btn-sm" style="font-size:10.5px;padding:3px;margin-top:2px;">Salvar API</button>
       </div>
+    </div>
+
+    <!-- Limpar fila pós-clip individual do canal -->
+    <div class="mode-box">
+      <label style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;font-size:11px;color:var(--text);" for="sideDeleteBlockAfterClip">
+        <span>Limpar fila pós-clip</span>
+        <input id="sideDeleteBlockAfterClip" type="checkbox" style="width:14px;height:14px;accent-color:var(--accent);cursor:pointer;">
+      </label>
+      <div class="mode-hint" style="margin-top:2px;">Exclui bloco bruto de 02_para_processar após cortar MP4s deste canal</div>
     </div>
 
     <div class="mode-box">
@@ -1218,7 +1247,25 @@ function renderSidebar() {
     badge.textContent = 'IDLE';
   }
 
-  const modo = (data.padroes?.modo_transcricao || 'manual').toLowerCase();
+  const curCh = state.selectedChannel
+    ? (data.canais || []).find(c => c.nome === state.selectedChannel)
+    : null;
+
+  const chLabel = document.getElementById('sideChannelLabel');
+  const chBadge = document.getElementById('sideChannelBadge');
+  if (chLabel && chBadge) {
+    if (curCh) {
+      chLabel.textContent = 'Config. Canal:';
+      chBadge.textContent = curCh.nome;
+      chBadge.className = 'badge badge-purple';
+    } else {
+      chLabel.textContent = 'Config. Padrão:';
+      chBadge.textContent = 'Global';
+      chBadge.className = 'badge';
+    }
+  }
+
+  const modo = (curCh?.modo_transcricao || data.padroes?.modo_transcricao || 'manual').toLowerCase();
   const sel = document.getElementById('modoTranscricaoSelect');
   const hint = document.getElementById('modoTranscricaoHint');
   if (sel && document.activeElement !== sel && sel.value !== modo) {
@@ -1227,22 +1274,34 @@ function renderSidebar() {
   if (hint) {
     hint.textContent = modo === 'automatico'
       ? 'Pré-transcreve cada bloco ao fechar'
-      : 'GPU livre durante a gravação';
+      : (modo === 'desativado' ? 'Whisper desativado para este canal' : 'GPU livre durante a gravação');
   }
 
-  const modoAnalise = (data.padroes?.modo_analise || 'blocos').toLowerCase();
-  const selAnalise = document.getElementById('modoAnaliseSelect');
-  const hintAnalise = document.getElementById('modoAnaliseHint');
-  if (selAnalise && document.activeElement !== selAnalise && selAnalise.value !== modoAnalise) {
-    selAnalise.value = modoAnalise;
+  const modoCorte = (curCh?.modo_corte || data.padroes?.modo_corte || (data.padroes?.modo_analise === 'automatico' ? 'automatico' : 'manual')).toLowerCase();
+  const selCorte = document.getElementById('modoCorteSelect');
+  const hintCorte = document.getElementById('modoCorteHint');
+  if (selCorte && document.activeElement !== selCorte && selCorte.value !== modoCorte) {
+    selCorte.value = modoCorte;
   }
-  if (hintAnalise) {
-    hintAnalise.textContent = modoAnalise === 'automatico'
-      ? 'Analisa e corta clipes ao vivo assim que o bloco fecha'
-      : 'Acumula lotes para você pedir a análise';
+  if (hintCorte) {
+    hintCorte.textContent = modoCorte === 'automatico'
+      ? 'Corta clipes MP4 ao vivo ao fechar bloco'
+      : (modoCorte === 'desativado' ? 'Cortes automáticos desativados' : 'Corta sob demanda ("Gerar Cortes")');
   }
 
-  const aiBackend = (data.padroes?.ai_backend || 'desabilitado').toLowerCase();
+  const modoLote = (curCh?.modo_lote || data.padroes?.modo_lote || 'manual').toLowerCase();
+  const selLote = document.getElementById('modoLoteSelect');
+  const hintLote = document.getElementById('modoLoteHint');
+  if (selLote && document.activeElement !== selLote && selLote.value !== modoLote) {
+    selLote.value = modoLote;
+  }
+  if (hintLote) {
+    hintLote.textContent = modoLote === 'automatico'
+      ? 'Prepara lote Premiere ao fechar bloco'
+      : (modoLote === 'desativado' ? 'Lote automático desativado' : 'Prepara lote sob demanda ("Lote Premiere")');
+  }
+
+  const aiBackend = (curCh?.ai_backend || data.padroes?.ai_backend || 'desabilitado').toLowerCase();
   const selAi = document.getElementById('aiBackendSelect');
   const hintAi = document.getElementById('aiBackendHint');
   if (selAi && document.activeElement !== selAi && selAi.value !== aiBackend) {
@@ -1253,6 +1312,12 @@ function renderSidebar() {
     else if (aiBackend === 'local_custom') hintAi.textContent = 'IA local personalizada (LM Studio / vLLM)';
     else if (aiBackend === 'api') hintAi.textContent = 'Chamando API externa (OpenAI / Gemini / OpenRouter)';
     else hintAi.textContent = 'Detecção leve sem consumo extra';
+  }
+
+  const chDelQueue = curCh ? !!curCh.deletar_bloco_apos_clip : !!data.padroes?.deletar_bloco_apos_clip;
+  const cbDelQueue = document.getElementById('sideDeleteBlockAfterClip');
+  if (cbDelQueue && document.activeElement !== cbDelQueue) {
+    cbDelQueue.checked = chDelQueue;
   }
 
   const ollamaBox = document.getElementById('ollamaControlBox');
@@ -1654,6 +1719,14 @@ function renderMain() {
 
       <div class="section-card">
         <div class="section-head">
+          <span class="section-title">Blocos na fila (02_para_processar)</span>
+          <button class="btn btn-sm" onclick="loadDetails('${escapeHtml(ch.nome)}')">Atualizar fila</button>
+        </div>
+        <div id="filaArquivosBox"><div class="section-sub">Carregando...</div></div>
+      </div>
+
+      <div class="section-card">
+        <div class="section-head">
           <span class="section-title">Em análise (03_em_processamento)</span>
           <span class="section-sub">Depois de preparar o lote, peça no chat para a IA criar o decisao_lote.json</span>
         </div>
@@ -1666,14 +1739,6 @@ function renderMain() {
           <span class="section-sub">Importe o .xml no Premiere com File &gt; Import</span>
         </div>
         ${lotesEdicaoHtml}
-      </div>
-
-      <div class="section-card">
-        <div class="section-head">
-          <span class="section-title">Blocos na fila (02_para_processar)</span>
-          <button class="btn btn-sm" onclick="loadDetails('${escapeHtml(ch.nome)}')">Atualizar fila</button>
-        </div>
-        <div id="filaArquivosBox"><div class="section-sub">Carregando...</div></div>
       </div>
     </div>
 
@@ -2038,15 +2103,16 @@ document.getElementById('btnStopAll').onclick = async () => {
 
 document.getElementById('modoTranscricaoSelect').onchange = async (e) => {
   const modo = e.target.value;
+  const targetChannel = state.selectedChannel || null;
   try {
     await api('/api/settings', {
       method: 'POST',
-      body: JSON.stringify({ modo_transcricao: modo }),
+      body: JSON.stringify({ channel: targetChannel, modo_transcricao: modo }),
     });
     showToast(
       modo === 'automatico'
-        ? 'Modo automático ativado: pré-transcrevendo cada bloco que fechar.'
-        : 'Modo manual ativado: Whisper roda só quando você pedir.'
+        ? `${targetChannel ? `[${targetChannel}] ` : ''}Modo automático: pré-transcrevendo blocos ao fechar.`
+        : (modo === 'desativado' ? `${targetChannel ? `[${targetChannel}] ` : ''}Whisper desativado.` : `${targetChannel ? `[${targetChannel}] ` : ''}Modo manual: Whisper roda só sob demanda.`)
     );
     await refreshState();
   } catch (err) {
@@ -2055,17 +2121,18 @@ document.getElementById('modoTranscricaoSelect').onchange = async (e) => {
   }
 };
 
-document.getElementById('modoAnaliseSelect').onchange = async (e) => {
+document.getElementById('modoCorteSelect').onchange = async (e) => {
   const modo = e.target.value;
+  const targetChannel = state.selectedChannel || null;
   try {
     await api('/api/settings', {
       method: 'POST',
-      body: JSON.stringify({ modo_analise: modo }),
+      body: JSON.stringify({ channel: targetChannel, modo_corte: modo }),
     });
     showToast(
       modo === 'automatico'
-        ? 'Modo automático: detectando e cortando momentos ao vivo.'
-        : 'Modo em blocos: aguardando você pedir a finalização.'
+        ? `${targetChannel ? `[${targetChannel}] ` : ''}Cortes automáticos ativados (ao fechar bloco).`
+        : (modo === 'desativado' ? `${targetChannel ? `[${targetChannel}] ` : ''}Cortes automáticos desativados.` : `${targetChannel ? `[${targetChannel}] ` : ''}Cortes manuais: sob demanda ao clicar "Gerar Cortes".`)
     );
     await refreshState();
   } catch (err) {
@@ -2073,6 +2140,45 @@ document.getElementById('modoAnaliseSelect').onchange = async (e) => {
     await refreshState();
   }
 };
+
+document.getElementById('modoLoteSelect').onchange = async (e) => {
+  const modo = e.target.value;
+  const targetChannel = state.selectedChannel || null;
+  try {
+    await api('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify({ channel: targetChannel, modo_lote: modo }),
+    });
+    showToast(
+      modo === 'automatico'
+        ? `${targetChannel ? `[${targetChannel}] ` : ''}Lote automático ativado (ao fechar bloco).`
+        : (modo === 'desativado' ? `${targetChannel ? `[${targetChannel}] ` : ''}Lotes desativados.` : `${targetChannel ? `[${targetChannel}] ` : ''}Lote manual: sob demanda ao clicar "Lote Premiere".`)
+    );
+    await refreshState();
+  } catch (err) {
+    showToast(err.message);
+    await refreshState();
+  }
+};
+
+const sideDelCb = document.getElementById('sideDeleteBlockAfterClip');
+if (sideDelCb) {
+  sideDelCb.onchange = async (e) => {
+    const deletar = e.target.checked;
+    const targetChannel = state.selectedChannel || null;
+    try {
+      await api('/api/settings', {
+        method: 'POST',
+        body: JSON.stringify({ channel: targetChannel, deletar_bloco_apos_clip: deletar }),
+      });
+      showToast(`${targetChannel ? `[${targetChannel}] ` : ''}Limpar fila pós-clip: ${deletar ? 'Ativado' : 'Desativado'}`);
+      await refreshState();
+    } catch (err) {
+      showToast(err.message);
+      await refreshState();
+    }
+  };
+}
 
 async function checkOllamaStatus() {
   const txt = document.getElementById('ollamaStatusText');
@@ -2108,12 +2214,13 @@ async function checkOllamaStatus() {
 
 document.getElementById('aiBackendSelect').onchange = async (e) => {
   const ai_backend = e.target.value;
+  const targetChannel = state.selectedChannel || null;
   try {
     await api('/api/settings', {
       method: 'POST',
-      body: JSON.stringify({ ai_backend }),
+      body: JSON.stringify({ channel: targetChannel, ai_backend }),
     });
-    showToast(`Auxílio de IA alterado para: ${ai_backend}`);
+    showToast(`${targetChannel ? `[${targetChannel}] ` : ''}Auxílio de IA alterado para: ${ai_backend}`);
     await refreshState();
   } catch (err) {
     showToast(err.message);
@@ -2177,9 +2284,13 @@ document.getElementById('btnOpenDiretorioCanais').onclick = async () => {
 document.getElementById('btnSaveLocalAi').onclick = async () => {
   const url = (document.getElementById('inputLocalAiUrl')?.value || '').trim();
   const model = (document.getElementById('inputLocalAiModel')?.value || '').trim();
+  const targetChannel = state.selectedChannel || null;
   try {
-    await api('/api/settings', { method: 'POST', body: JSON.stringify({ ai_local_url: url, ai_modelo: model }) });
-    showToast('Configurações de IA local salvas!');
+    await api('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify({ channel: targetChannel, ai_local_url: url, ai_modelo: model }),
+    });
+    showToast(`${targetChannel ? `[${targetChannel}] ` : ''}Configurações de IA local salvas!`);
     await refreshState();
   } catch (err) { showToast(err.message); }
 };
@@ -2188,9 +2299,13 @@ document.getElementById('btnSaveApiSettings').onclick = async () => {
   const url = (document.getElementById('inputApiUrl')?.value || '').trim();
   const key = (document.getElementById('inputApiKey')?.value || '').trim();
   const model = (document.getElementById('inputApiModel')?.value || '').trim();
+  const targetChannel = state.selectedChannel || null;
   try {
-    await api('/api/settings', { method: 'POST', body: JSON.stringify({ ai_api_url: url, ai_api_key: key, ai_modelo: model }) });
-    showToast('Configurações de API salvas!');
+    await api('/api/settings', {
+      method: 'POST',
+      body: JSON.stringify({ channel: targetChannel, ai_api_url: url, ai_api_key: key, ai_modelo: model }),
+    });
+    showToast(`${targetChannel ? `[${targetChannel}] ` : ''}Configurações de API salvas!`);
     await refreshState();
   } catch (err) { showToast(err.message); }
 };
