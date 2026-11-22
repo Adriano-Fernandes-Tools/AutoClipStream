@@ -52,10 +52,10 @@ html, body {
 .sidebar {
   background: var(--bg-side);
   border-right: 1px solid var(--hairline);
-  padding: 18px 14px;
+  padding: 14px 12px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
   overflow-y: auto;
 }
 
@@ -170,8 +170,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  flex: 1;
-  min-height: 0;
+  flex-shrink: 0;
 }
 
 .side-label {
@@ -187,6 +186,8 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  flex-shrink: 0;
+  max-height: 220px;
   overflow-y: auto;
 }
 
@@ -879,6 +880,12 @@ details.resumo-box pre {
       <button id="btnNewChannel" class="btn btn-primary btn-sm btn-wide">+ Novo canal</button>
     </div>
 
+    <!-- Lista de Canais no topo da barra para acesso imediato e visibilidade permanente -->
+    <div class="side-section">
+      <div class="side-label">Canais</div>
+      <div id="channelList" class="channel-list"></div>
+    </div>
+
     <!-- Banner de contexto de canal para as configurações laterais -->
     <div id="sideChannelBanner" style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;margin-bottom:8px;background:rgba(255,255,255,0.03);border:1px solid var(--hairline);border-radius:6px;font-size:11px;">
       <span style="font-weight:600;display:flex;align-items:center;gap:4px;color:var(--text);">
@@ -892,7 +899,6 @@ details.resumo-box pre {
       <select id="modoTranscricaoSelect">
         <option value="automatico">Automático (ao fechar bloco)</option>
         <option value="manual">Manual (só quando eu pedir)</option>
-        <option value="desativado">Desativado</option>
       </select>
       <div id="modoTranscricaoHint" class="mode-hint">Pré-transcreve cada bloco ao fechar</div>
     </div>
@@ -902,7 +908,6 @@ details.resumo-box pre {
       <select id="modoCorteSelect">
         <option value="automatico">Automático (Corta ao vivo ao fechar)</option>
         <option value="manual">Manual (Gera clipes sob demanda)</option>
-        <option value="desativado">Desativado</option>
       </select>
       <div id="modoCorteHint" class="mode-hint">Analisa e extrai clipes MP4 automaticamente</div>
     </div>
@@ -910,9 +915,8 @@ details.resumo-box pre {
     <div class="mode-box">
       <label class="side-label" style="padding:0;" for="modoLoteSelect">Preparação de Lote (Premiere)</label>
       <select id="modoLoteSelect">
-        <option value="manual">Manual (Prepara lote sob demanda)</option>
         <option value="automatico">Automático (Prepara lote ao fechar)</option>
-        <option value="desativado">Desativado</option>
+        <option value="manual">Manual (Prepara lote sob demanda)</option>
       </select>
       <div id="modoLoteHint" class="mode-hint">Prepara lote para edição apenas quando acionado</div>
     </div>
@@ -986,11 +990,6 @@ details.resumo-box pre {
         <button id="btnSaveOutputDir" class="btn btn-sm" style="flex:1;font-size:10.5px;padding:4px;">Salvar</button>
         <button id="btnOpenOutputDir" class="btn btn-ghost btn-sm" style="flex:1;font-size:10.5px;padding:4px;">Abrir</button>
       </div>
-    </div>
-
-    <div class="side-section">
-      <div class="side-label">Canais</div>
-      <div id="channelList" class="channel-list"></div>
     </div>
 
     <div class="side-footer">
@@ -1265,7 +1264,7 @@ function renderSidebar() {
     }
   }
 
-  const modo = (curCh?.modo_transcricao || data.padroes?.modo_transcricao || 'manual').toLowerCase();
+  const modo = (curCh?.modo_transcricao || data.padroes?.modo_transcricao || 'manual').toLowerCase() === 'automatico' ? 'automatico' : 'manual';
   const sel = document.getElementById('modoTranscricaoSelect');
   const hint = document.getElementById('modoTranscricaoHint');
   if (sel && document.activeElement !== sel && sel.value !== modo) {
@@ -1274,10 +1273,11 @@ function renderSidebar() {
   if (hint) {
     hint.textContent = modo === 'automatico'
       ? 'Pré-transcreve cada bloco ao fechar'
-      : (modo === 'desativado' ? 'Whisper desativado para este canal' : 'GPU livre durante a gravação');
+      : 'GPU livre durante a gravação (sob demanda)';
   }
 
-  const modoCorte = (curCh?.modo_corte || data.padroes?.modo_corte || (data.padroes?.modo_analise === 'automatico' ? 'automatico' : 'manual')).toLowerCase();
+  const rawModoCorte = (curCh?.modo_corte || data.padroes?.modo_corte || (data.padroes?.modo_analise === 'automatico' ? 'automatico' : 'manual')).toLowerCase();
+  const modoCorte = rawModoCorte === 'automatico' ? 'automatico' : 'manual';
   const selCorte = document.getElementById('modoCorteSelect');
   const hintCorte = document.getElementById('modoCorteHint');
   if (selCorte && document.activeElement !== selCorte && selCorte.value !== modoCorte) {
@@ -1286,10 +1286,11 @@ function renderSidebar() {
   if (hintCorte) {
     hintCorte.textContent = modoCorte === 'automatico'
       ? 'Corta clipes MP4 ao vivo ao fechar bloco'
-      : (modoCorte === 'desativado' ? 'Cortes automáticos desativados' : 'Corta sob demanda ("Gerar Cortes")');
+      : 'Corta sob demanda (ao clicar "Gerar Cortes")';
   }
 
-  const modoLote = (curCh?.modo_lote || data.padroes?.modo_lote || 'manual').toLowerCase();
+  const rawModoLote = (curCh?.modo_lote || data.padroes?.modo_lote || 'manual').toLowerCase();
+  const modoLote = rawModoLote === 'automatico' ? 'automatico' : 'manual';
   const selLote = document.getElementById('modoLoteSelect');
   const hintLote = document.getElementById('modoLoteHint');
   if (selLote && document.activeElement !== selLote && selLote.value !== modoLote) {
@@ -1298,7 +1299,7 @@ function renderSidebar() {
   if (hintLote) {
     hintLote.textContent = modoLote === 'automatico'
       ? 'Prepara lote Premiere ao fechar bloco'
-      : (modoLote === 'desativado' ? 'Lote automático desativado' : 'Prepara lote sob demanda ("Lote Premiere")');
+      : 'Prepara lote sob demanda (ao clicar "Lote Premiere")';
   }
 
   const aiBackend = (curCh?.ai_backend || data.padroes?.ai_backend || 'desabilitado').toLowerCase();
@@ -2111,8 +2112,8 @@ document.getElementById('modoTranscricaoSelect').onchange = async (e) => {
     });
     showToast(
       modo === 'automatico'
-        ? `${targetChannel ? `[${targetChannel}] ` : ''}Modo automático: pré-transcrevendo blocos ao fechar.`
-        : (modo === 'desativado' ? `${targetChannel ? `[${targetChannel}] ` : ''}Whisper desativado.` : `${targetChannel ? `[${targetChannel}] ` : ''}Modo manual: Whisper roda só sob demanda.`)
+        ? `${targetChannel ? `[${targetChannel}] ` : ''}Transcrição automática ativada.`
+        : `${targetChannel ? `[${targetChannel}] ` : ''}Transcrição manual ativada (sob demanda).`
     );
     await refreshState();
   } catch (err) {
@@ -2132,7 +2133,7 @@ document.getElementById('modoCorteSelect').onchange = async (e) => {
     showToast(
       modo === 'automatico'
         ? `${targetChannel ? `[${targetChannel}] ` : ''}Cortes automáticos ativados (ao fechar bloco).`
-        : (modo === 'desativado' ? `${targetChannel ? `[${targetChannel}] ` : ''}Cortes automáticos desativados.` : `${targetChannel ? `[${targetChannel}] ` : ''}Cortes manuais: sob demanda ao clicar "Gerar Cortes".`)
+        : `${targetChannel ? `[${targetChannel}] ` : ''}Cortes manuais: sob demanda ("Gerar Cortes").`
     );
     await refreshState();
   } catch (err) {
@@ -2152,7 +2153,7 @@ document.getElementById('modoLoteSelect').onchange = async (e) => {
     showToast(
       modo === 'automatico'
         ? `${targetChannel ? `[${targetChannel}] ` : ''}Lote automático ativado (ao fechar bloco).`
-        : (modo === 'desativado' ? `${targetChannel ? `[${targetChannel}] ` : ''}Lotes desativados.` : `${targetChannel ? `[${targetChannel}] ` : ''}Lote manual: sob demanda ao clicar "Lote Premiere".`)
+        : `${targetChannel ? `[${targetChannel}] ` : ''}Lote manual: sob demanda ("Lote Premiere").`
     );
     await refreshState();
   } catch (err) {
