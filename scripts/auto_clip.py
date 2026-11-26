@@ -264,14 +264,18 @@ def _build_ai_prompt(canal: str, transcript_text: str, context: str = "", jogo: 
         f"Você é um editor de vídeo especialista em cortes virais de lives de games no TikTok, Reels e Shorts.\n"
         f"Canal: {canal}\n"
         + (f"Jogo/Categoria: {jogo}\n" if jogo else "")
-        + (f"Contexto da live: {context}\n" if context else "")
+        + (f"Contexto contínuo da transmissão:\n{context}\n" if context else "")
         + guide_section
         + f"\nTranscrição com minutagem do bloco de vídeo (início ao fim):\n{transcript_text}\n\n"
-        "Avalie este bloco com um score de 0 a 100 indicando o potencial viral.\n"
-        "Identifique de 3 a 6 dos momentos mais interessantes e virais distribuídos ao longo de TODO o vídeo (início, meio e fim do bloco), sem concentrar apenas nos primeiros minutos.\n"
-        "Para cada momento, indique o segundo exato (em segundos desde o início do bloco, ex: 1m30s = 90) e uma breve descrição do gancho ou clímax.\n"
-        "Responda APENAS em JSON no seguinte formato:\n"
-        '{"score": 75, "momentos": [{"segundo": 95, "descricao": "reação épica ao clutch"}, {"segundo": 340, "descricao": "fuga insana da polícia"}]}'
+        "INSTRUÇÕES DE ANÁLISE:\n"
+        "1. Avalie este bloco com base minuciosa no diálogo, reações e falas da transcrição.\n"
+        "2. Identifique momentos virais: piadas, falas de choque/surpresa, sustos, jogadas épicas, discussões cômicas ou desabafos marcantes.\n"
+        "3. Avalie o bloco com um score de 0 a 100 indicando o potencial viral.\n"
+        "4. Selecione de 3 a 6 dos momentos mais interessantes e virais distribuídos ao longo do bloco (início, meio e fim), sem focar apenas no começo.\n"
+        "5. Para cada momento, indique o segundo exato do clímax (em segundos desde o início do bloco, ex: 1m30s = 90), score (0-100) e uma breve descrição citando o gancho da fala.\n"
+        "6. Escreva um resumo objetivo de 1 a 2 frases do que aconteceu neste bloco e o estado atual da live para dar continuidade aos blocos seguintes.\n\n"
+        "Responda APENAS em JSON no formato exato:\n"
+        '{"score": 75, "resumo_bloco": "Streamer disputou clutch final e comemorou vitória gritando", "estado_atual": "Jogando modo ranqueado", "momentos": [{"segundo": 95, "score": 85, "descricao": "reação ao clutch: não acredito que ganhei"}, {"segundo": 340, "score": 78, "descricao": "piada sobre o erro do companheiro"}]}'
     )
 
 
@@ -353,15 +357,69 @@ def _parse_ai_response(text: str) -> dict[str, Any]:
     """Extrai JSON da resposta do LLM, tolerando texto antes/depois."""
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
-        return {"score": 0, "momentos": [], "raw": text[:300]}
+        return {"score": 0, "momentos": [], "resumo_bloco": "", "estado_atual": "", "raw": text[:300]}
     try:
         data = json.loads(match.group())
         return {
             "score": int(data.get("score", 0)),
             "momentos": data.get("momentos", []),
+            "resumo_bloco": str(data.get("resumo_bloco") or "").strip(),
+            "estado_atual": str(data.get("estado_atual") or "").strip(),
         }
     except Exception:
-        return {"score": 0, "momentos": [], "raw": text[:300]}
+        return {"score": 0, "momentos": [], "resumo_bloco": "", "estado_atual": "", "raw": text[:300]}
+
+
+def atualizar_estado_live_incremental(
+    canal: str,
+    bloco_nome: str,
+    resumo_bloco: str,
+    estado_atual: str = "",
+) -> None:
+    """Atualiza o documento vivo estado_live.md de forma incremental ao processar um bloco."""
+    if not resumo_bloco:
+        return
+    try:
+        from config import ensure_channel_structure
+        paths = ensure_channel_structure(canal)
+        estado_path = paths["estado_live"]
+        texto_atual = estado_path.read_text(encoding="utf-8") if estado_path.exists() else ""
+
+        marker_log = "## Log Cronológico por Rodada"
+        log_anterior = ""
+        if marker_log in texto_atual:
+            _, resto = texto_atual.split(marker_log, 1)
+            resto = resto.strip()
+            if resto and "*(O histórico das rodadas aparecerá aqui.)*" not in resto:
+                log_anterior = resto
+
+        data_hora = datetime.now().strftime("%Y-%m-%d %H:%M")
+        nova_entrada = f"### Bloco `{bloco_nome}` ({data_hora})\n- **Resumo:** {resumo_bloco}"
+        bloco_log = f"{log_anterior}\n\n{nova_entrada}".strip() if log_anterior else nova_entrada
+
+        estado_texto = estado_atual.strip() or "Transmissão em andamento."
+
+        arcos_md = "- *(Nenhum arco em aberto registrado.)*"
+        if "## Arcos / Missões em Aberto" in texto_atual:
+            partes = texto_atual.split("## Arcos / Missões em Aberto", 1)[1]
+            if marker_log in partes:
+                arcos_bloco = partes.split(marker_log, 1)[0].strip()
+                if arcos_bloco:
+                    arcos_md = arcos_bloco
+
+        conteudo = (
+            f"# Estado da Live — {canal}\n\n"
+            "> Documento vivo atualizado a cada lote ou bloco processado. Serve de contexto contínuo para a IA entender missões, piadas recorrentes e arcos em andamento entre blocos de 10 minutos.\n\n"
+            "## Estado Atual da Live\n\n"
+            f"{estado_texto}\n\n"
+            "## Arcos / Missões em Aberto\n\n"
+            f"{arcos_md}\n\n"
+            f"{marker_log}\n\n"
+            f"{bloco_log}\n"
+        )
+        estado_path.write_text(conteudo, encoding="utf-8")
+    except Exception as exc:
+        print(f"[AUTO-CLIP] [AVISO] Falha ao atualizar estado_live.md: {exc}", file=sys.stderr)
 
 
 # ==============================================================================
@@ -422,9 +480,20 @@ def analyze_block(
     # --- AI (opcional) ---
     ai_score: int | None = None
     ai_momentos: list[dict[str, Any]] = []
+    resumo_bloco_ai = ""
+    estado_atual_ai = ""
 
     if ai_backend in ("api", "local", "local_custom") and transcript_segs:
         transcript_formatted = format_transcript_with_timestamps(transcript_segs)
+        context = ""
+        try:
+            from config import ensure_channel_structure
+            p_ch = ensure_channel_structure(canal)
+            if p_ch["estado_live"].exists():
+                context = p_ch["estado_live"].read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+
         if ai_backend == "api":
             result = score_ai_api(
                 canal=canal,
@@ -432,6 +501,7 @@ def analyze_block(
                 api_url=str(config.get("ai_api_url", "")),
                 api_key=str(config.get("ai_api_key", "")),
                 modelo=str(config.get("ai_modelo", "")),
+                context=context,
                 jogo=jogo,
             )
         else:  # local
@@ -440,11 +510,16 @@ def analyze_block(
                 transcript_text=transcript_formatted,
                 modelo=str(config.get("ai_modelo", "gemma3:4b")),
                 ollama_url=str(config.get("ai_local_url", "http://localhost:11434")),
+                context=context,
                 jogo=jogo,
             )
         if result.get("success") and result.get("score") is not None:
             ai_score = int(result["score"])
             ai_momentos = result.get("momentos", [])
+            resumo_bloco_ai = str(result.get("resumo_bloco") or "")
+            estado_atual_ai = str(result.get("estado_atual") or "")
+            if resumo_bloco_ai:
+                atualizar_estado_live_incremental(canal, video_path.stem, resumo_bloco_ai, estado_atual_ai)
         else:
             err = result.get("error", "resposta vazia")
             print(f"[AUTO-CLIP] [AVISO] IA ({ai_backend}) não respondeu ({err}). Usando pontuação áudio/texto.", file=sys.stderr)
@@ -542,6 +617,8 @@ def analyze_block(
         "audio_score": audio_score,
         "text_score": text_score,
         "ai_score": ai_score,
+        "resumo_bloco": resumo_bloco_ai,
+        "estado_atual": estado_atual_ai,
         "momentos": deduped,
         "video": video_path.name,
         "canal": canal,

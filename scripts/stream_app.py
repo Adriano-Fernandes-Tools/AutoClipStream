@@ -636,6 +636,130 @@ def select_top_momentos(
     return selected
 
 
+_ACTIVE_LOTE_ANALYSES: set[str] = set()
+
+
+def trigger_lote_ai_and_xml(channel: str, lote: str) -> tuple[bool, str]:
+    safe_ch = sanitize_channel_name(channel)
+    paths = ensure_channel_structure(safe_ch)
+    lote_dir = paths["03_em_processamento"] / lote
+    if not lote_dir.exists():
+        return False, f"Lote '{lote}' não encontrado em 03_em_processamento."
+
+    decisao_file = lote_dir / "decisao_lote.json"
+    if decisao_file.exists():
+        return False, f"Lote '{lote}' já possui decisao_lote.json."
+
+    lote_key = f"{safe_ch}/{lote}"
+    if lote_key in _ACTIVE_LOTE_ANALYSES:
+        return True, f"Análise de IA do lote '{lote}' já está em andamento."
+
+    _ACTIVE_LOTE_ANALYSES.add(lote_key)
+
+    def _worker() -> None:
+        try:
+            append_log("LOTE", f"Iniciando análise com IA do lote '{lote}' ({safe_ch})...", channel=safe_ch)
+            from auto_clip import analyze_block
+            from premiere_xml import probe_video
+
+            cfg = load_channels_config()
+            padroes = cfg.get("padroes", {})
+            min_score = float(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE))
+
+            video_files = sorted(
+                p for p in lote_dir.iterdir()
+                if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
+            )
+            if not video_files:
+                append_log("LOTE", f"Nenhum arquivo de vídeo encontrado no lote '{lote}'.", channel=safe_ch)
+                return
+
+            transcricoes_dir = lote_dir / "transcricoes"
+            manuais = load_manual_markers(safe_ch)
+
+            blocos_decisao: list[dict[str, Any]] = []
+            total_aprovados = 0
+            total_descartados = 0
+
+            for vpath in video_files:
+                tr_json = transcricoes_dir / f"{vpath.stem}.json"
+                duracao = 600.0
+                try:
+                    duracao = float(probe_video(vpath)["duration"])
+                except Exception:
+                    pass
+
+                manuais_deste = [m for m in manuais if m.get("bloco_arquivo") == vpath.name or m.get("bloco_stem") == vpath.stem]
+
+                append_log("LOTE", f"Analisando bloco: {vpath.name}...", channel=safe_ch)
+                analysis = analyze_block(safe_ch, vpath, tr_json, padroes)
+                score = int(analysis.get("score", 0))
+                momentos = analysis.get("momentos", [])
+
+                marcadores: list[dict[str, Any]] = []
+                for idx, m in enumerate(momentos, start=1):
+                    center = float(m.get("segundo", 0.0))
+                    in_s = max(0.0, center - 10.0)
+                    out_s = min(duracao, center + 20.0)
+                    desc = str(m.get("descricao") or f"Momento {idx}")
+                    marcadores.append({
+                        "in_seg": in_s,
+                        "out_seg": out_s,
+                        "titulo": desc,
+                        "comentario": f"Score {m.get('score', score)}/100",
+                        "tipo": "destaque",
+                    })
+
+                for mm in manuais_deste:
+                    m_sec = float(mm.get("segundo", 0.0))
+                    marcadores.append({
+                        "in_seg": max(0.0, m_sec - 5.0),
+                        "out_seg": min(duracao, m_sec + 25.0),
+                        "titulo": f"★ {mm.get('nota') or 'Marcador manual'}",
+                        "comentario": "Marcado ao vivo",
+                        "tipo": "manual",
+                    })
+
+                eh_aprovado = (score >= min_score) or (len(marcadores) > 0) or bool(manuais_deste)
+                if eh_aprovado:
+                    total_aprovados += 1
+                    blocos_decisao.append({
+                        "arquivo": vpath.name,
+                        "status": "aprovado",
+                        "marcadores": marcadores,
+                        "cortes_descartados": [],
+                    })
+                else:
+                    total_descartados += 1
+                    blocos_decisao.append({
+                        "arquivo": vpath.name,
+                        "status": "descartado",
+                        "motivo_descarte": f"Pouca atividade relevante (score {score}/100)",
+                        "marcadores": [],
+                        "cortes_descartados": [],
+                    })
+
+            decisao_payload = {
+                "resumo_rodada": f"Lote {lote} analisado automaticamente. {total_aprovados} bloco(s) aprovado(s), {total_descartados} descartado(s).",
+                "estado_atual_live": "Análise concluída com sucesso.",
+                "arcos_em_aberto": [],
+                "blocos": blocos_decisao,
+            }
+            decisao_file = lote_dir / "decisao_lote.json"
+            decisao_file.write_text(json.dumps(decisao_payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            append_log("LOTE", f"decisao_lote.json gerado ({total_aprovados} aprovados, {total_descartados} descartados). Disparando geração de XML do Premiere...", channel=safe_ch)
+
+            args = ["--canal", safe_ch, "--lote", lote]
+            JOB_MGR.start_job("finalizar", safe_ch, "finalizar_lote.py", args)
+        except Exception as exc:
+            append_log("LOTE", f"Erro na auto-análise do lote '{lote}': {exc}", channel=safe_ch)
+        finally:
+            _ACTIVE_LOTE_ANALYSES.discard(lote_key)
+
+    threading.Thread(target=_worker, daemon=True, name=f"auto-lote-analyze-{safe_ch}").start()
+    return True, f"Análise de IA e geração de XML iniciadas para o lote '{lote}'."
+
+
 class AutoClipWatcher:
     """Monitora blocos pré-transcritos e corta clipes automaticamente quando modo_analise == 'automatico'."""
 
@@ -688,6 +812,10 @@ class AutoClipWatcher:
                         (entry or {}).get("modo_lote") or padroes.get("modo_lote", "manual")
                     ).lower()
 
+                    ch_modo_xml = str(
+                        (entry or {}).get("modo_xml") or padroes.get("modo_xml", "manual")
+                    ).lower()
+
                     ch_paths = ensure_channel_structure(ch_name)
                     dir_fila = ch_paths["02_para_processar"]
                     pre_dir = dir_fila / PRE_TRANSCRICOES_DIRNAME
@@ -712,6 +840,17 @@ class AutoClipWatcher:
                                 ["--canal", ch_name],
                             )
 
+                    # Geração de XML Automática se o canal estiver configurado para 'automatico'
+                    if ch_modo_xml == "automatico" and not JOB_MGR.snapshot()["running"]:
+                        dir_proc = ch_paths["03_em_processamento"]
+                        if dir_proc.exists():
+                            for lote_folder in sorted(dir_proc.iterdir()):
+                                if lote_folder.is_dir() and not lote_folder.name.startswith("."):
+                                    dec_file = lote_folder / "decisao_lote.json"
+                                    if not dec_file.exists():
+                                        trigger_lote_ai_and_xml(ch_name, lote_folder.name)
+                                        break
+
                     if ch_modo_corte != "automatico":
                         continue
 
@@ -731,7 +870,7 @@ class AutoClipWatcher:
                         # Se modo de transcrição for automático, aguarda o Whisper concluir antes de analisar.
                         # Regra: se não há transcrição ainda, só avança se o JOB_MGR não estiver rodando
                         # (i.e., Whisper terminou ou nunca foi disparado) E o arquivo já é antigo o suficiente.
-                        modo_tr = str(padroes.get("modo_transcricao", "automatico")).lower()
+                        modo_tr = str(ch_config.get("modo_transcricao", padroes.get("modo_transcricao", "automatico"))).lower()
                         if modo_tr == "automatico" and transcript_json is None:
                             # Se há um job rodando (Whisper provavelmente), aguarda sem timeout
                             if JOB_MGR.snapshot()["running"]:
@@ -981,6 +1120,9 @@ def build_state_payload() -> dict[str, Any]:
                 "modo_lote": str(
                     (entry or {}).get("modo_lote") or padroes.get("modo_lote", "manual")
                 ),
+                "modo_xml": str(
+                    (entry or {}).get("modo_xml") or padroes.get("modo_xml", "manual")
+                ),
                 "ai_backend": str(
                     (entry or {}).get("ai_backend") or padroes.get("ai_backend", DEFAULT_AI_BACKEND)
                 ),
@@ -1032,6 +1174,7 @@ def build_state_payload() -> dict[str, Any]:
                 "automatico" if padroes.get("modo_analise") == "automatico" else "manual",
             ),
             "modo_lote": padroes.get("modo_lote", "manual"),
+            "modo_xml": padroes.get("modo_xml", "manual"),
             "modo_analise": padroes.get("modo_analise", DEFAULT_ANALYSIS_MODE),
             "ai_backend": padroes.get("ai_backend", DEFAULT_AI_BACKEND),
             "ai_api_url": padroes.get("ai_api_url", ""),
@@ -1351,6 +1494,20 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                 if ex_name in (original_safe, nome):
                     if "jogo" not in novo_item and "jogo" in existing:
                         novo_item["jogo"] = existing["jogo"]
+                    for k in (
+                        "modo_transcricao",
+                        "modo_corte",
+                        "modo_lote",
+                        "modo_xml",
+                        "ai_backend",
+                        "ai_modelo",
+                        "ai_api_url",
+                        "ai_api_key",
+                        "ai_local_url",
+                        "output_dir",
+                    ):
+                        if k not in novo_item and k in existing:
+                            novo_item[k] = existing[k]
                     canais[idx] = novo_item
                     replaced = True
                     break
@@ -1415,6 +1572,16 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             if modo_lote_norm in ("manual", "automatico", "desativado"):
                 target_dict["modo_lote"] = modo_lote_norm
                 append_log("APP", f"{log_prefix}Preparação de lotes: {modo_lote_norm}.", channel=channel_safe or None)
+
+        # --- Geração de XML (Premiere) ---
+        modo_xml = body.get("modo_xml")
+        if modo_xml is not None:
+            modo_xml_norm = str(modo_xml).strip().lower()
+            if modo_xml_norm in ("manual", "automatico"):
+                target_dict["modo_xml"] = modo_xml_norm
+                append_log("APP", f"{log_prefix}Geração de XML (Premiere): {modo_xml_norm}.", channel=channel_safe or None)
+                if modo_xml_norm == "automatico":
+                    AUTO_CLIP.wake()
 
         # Suporte legado para modo_analise
         modo_analise = body.get("modo_analise")
@@ -1802,113 +1969,11 @@ class StreamAppHandler(BaseHTTPRequestHandler):
         if not channel or not lote:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Informe 'channel' e 'lote'."})
             return
-
-        paths = ensure_channel_structure(channel)
-        lote_dir = paths["03_em_processamento"] / lote
-        if not lote_dir.exists():
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": f"Lote '{lote}' não encontrado em 03_em_processamento."})
+        ok, msg = trigger_lote_ai_and_xml(channel, lote)
+        if not ok:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": msg})
             return
-
-        def _worker() -> None:
-            try:
-                append_log("LOTE", f"Iniciando análise com IA do lote '{lote}' ({channel})...", channel=channel)
-                from auto_clip import analyze_block
-                from premiere_xml import probe_video
-
-                cfg = load_channels_config()
-                padroes = cfg.get("padroes", {})
-                min_score = float(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE))
-
-                video_files = sorted(
-                    p for p in lote_dir.iterdir()
-                    if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
-                )
-                if not video_files:
-                    append_log("LOTE", f"Nenhum arquivo de vídeo encontrado no lote '{lote}'.", channel=channel)
-                    return
-
-                transcricoes_dir = lote_dir / "transcricoes"
-                manuais = load_manual_markers(channel)
-
-                blocos_decisao: list[dict[str, Any]] = []
-                total_aprovados = 0
-                total_descartados = 0
-
-                for vpath in video_files:
-                    tr_json = transcricoes_dir / f"{vpath.stem}.json"
-                    duracao = 600.0
-                    try:
-                        duracao = float(probe_video(vpath)["duration"])
-                    except Exception:
-                        pass
-
-                    manuais_deste = [m for m in manuais if m.get("bloco_arquivo") == vpath.name or m.get("bloco_stem") == vpath.stem]
-
-                    append_log("LOTE", f"Analisando bloco: {vpath.name}...", channel=channel)
-                    analysis = analyze_block(channel, vpath, tr_json, padroes)
-                    score = int(analysis.get("score", 0))
-                    momentos = analysis.get("momentos", [])
-
-                    marcadores: list[dict[str, Any]] = []
-                    for idx, m in enumerate(momentos, start=1):
-                        center = float(m.get("segundo", 0.0))
-                        in_s = max(0.0, center - 10.0)
-                        out_s = min(duracao, center + 20.0)
-                        desc = str(m.get("descricao") or f"Momento {idx}")
-                        marcadores.append({
-                            "in_seg": in_s,
-                            "out_seg": out_s,
-                            "titulo": desc,
-                            "comentario": f"Score {m.get('score', score)}/100",
-                            "tipo": "destaque",
-                        })
-
-                    for mm in manuais_deste:
-                        m_sec = float(mm.get("segundo", 0.0))
-                        marcadores.append({
-                            "in_seg": max(0.0, m_sec - 5.0),
-                            "out_seg": min(duracao, m_sec + 25.0),
-                            "titulo": f"★ {mm.get('nota') or 'Marcador manual'}",
-                            "comentario": "Marcado ao vivo",
-                            "tipo": "manual",
-                        })
-
-                    eh_aprovado = (score >= min_score) or (len(marcadores) > 0) or bool(manuais_deste)
-                    if eh_aprovado:
-                        total_aprovados += 1
-                        blocos_decisao.append({
-                            "arquivo": vpath.name,
-                            "status": "aprovado",
-                            "marcadores": marcadores,
-                            "cortes_descartados": [],
-                        })
-                    else:
-                        total_descartados += 1
-                        blocos_decisao.append({
-                            "arquivo": vpath.name,
-                            "status": "descartado",
-                            "motivo_descarte": f"Pouca atividade relevante (score {score}/100)",
-                            "marcadores": [],
-                            "cortes_descartados": [],
-                        })
-
-                decisao_payload = {
-                    "resumo_rodada": f"Lote {lote} analisado automaticamente. {total_aprovados} bloco(s) aprovado(s), {total_descartados} descartado(s).",
-                    "estado_atual_live": f"Análise concluída com sucesso.",
-                    "arcos_em_aberto": [],
-                    "blocos": blocos_decisao,
-                }
-                decisao_file = lote_dir / "decisao_lote.json"
-                decisao_file.write_text(json.dumps(decisao_payload, indent=2, ensure_ascii=False), encoding="utf-8")
-                append_log("LOTE", f"decisao_lote.json gerado ({total_aprovados} aprovados, {total_descartados} descartados). Disparando geração de XML do Premiere...", channel=channel)
-
-                args = ["--canal", channel, "--lote", lote]
-                JOB_MGR.start_job("finalizar", channel, "finalizar_lote.py", args)
-            except Exception as exc:
-                append_log("LOTE", f"Erro na auto-análise do lote '{lote}': {exc}", channel=channel)
-
-        threading.Thread(target=_worker, daemon=True, name="auto-lote-analyze").start()
-        self._send_json(HTTPStatus.OK, {"ok": True, "message": f"Análise de IA e geração de XML iniciadas para o lote '{lote}'."})
+        self._send_json(HTTPStatus.OK, {"ok": True, "message": msg})
 
     def _handle_cut(self, body: dict[str, Any]) -> None:
         channel = sanitize_channel_name(str(body.get("channel") or ""))
