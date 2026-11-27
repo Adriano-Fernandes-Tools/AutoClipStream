@@ -952,6 +952,15 @@ class AutoClipWatcher:
 
                         if should_reanalyze:
                             self._processed.discard(str(mkv_path))
+                            # Remove clips from the audio-only pass so they are re-cut with
+                            # proper transcript-derived names after the reanalysis below.
+                            if has_clips and out_base_check.exists():
+                                for old_clip in list(out_base_check.glob("*.mp4")) + list(out_base_check.glob("*.srt")):
+                                    try:
+                                        old_clip.unlink(missing_ok=True)
+                                    except Exception:
+                                        pass
+                                append_log("AUTO-CLIP", f"Reanálise com transcrição: clips antigos (sem texto) removidos de {out_base_check.name}", channel=ch_name)
                         elif marker_file.exists() and has_clips:
                             continue
                         elif str(mkv_path) in self._processed and has_clips:
