@@ -615,25 +615,71 @@ def _resolve_transcript_json(mkv_path: Path, pre_dir: Path) -> Path | None:
     return None
 
 
+def _momento_priority(m: dict[str, Any]) -> float:
+    """Rank score prioritizing AI and vision detections over raw keyword spikes."""
+    base = float(m.get("score", 0))
+    tipo = str(m.get("tipo") or "").lower()
+    if tipo == "ai":
+        return base + 15.0
+    if tipo in ("plugin", "vision", "ocr"):
+        return base + 10.0
+    return base
+
+
 def select_top_momentos(
     momentos: list[dict[str, Any]],
     max_clips: int = 5,
     min_distance_sec: float = 35.0,
+    dur_video: float = 0.0,
 ) -> list[dict[str, Any]]:
-    """Seleciona os melhores momentos com maior score, garantindo distribuição temporal sem sobreposição."""
-    if not momentos:
+    """Seleciona os melhores momentos priorizando IA e garantindo distribuição ao longo do bloco."""
+    if not momentos or max_clips <= 0:
         return []
-    sorted_m = sorted(momentos, key=lambda x: float(x.get("score", 0)), reverse=True)
+
     selected: list[dict[str, Any]] = []
+
+    def _can_pick(sec: float) -> bool:
+        return all(abs(sec - float(s.get("segundo", 0))) >= min_distance_sec for s in selected)
+
+    # 1a passada: garante representatividade em faixas temporais (ex: inicio, meio, fim)
+    if dur_video > 120.0 and max_clips >= 2:
+        n_buckets = min(max_clips, 3)
+        bucket_len = dur_video / n_buckets
+        for b in range(n_buckets):
+            if len(selected) >= max_clips:
+                break
+            b_start = b * bucket_len
+            b_end = (b + 1) * bucket_len
+            bucket_cands = [
+                m for m in momentos
+                if b_start <= float(m.get("segundo", 0)) < b_end
+            ]
+            bucket_cands.sort(key=_momento_priority, reverse=True)
+            for m in bucket_cands:
+                if _can_pick(float(m.get("segundo", 0))):
+                    selected.append(m)
+                    break
+
+    # 2a passada: preenche as vagas restantes pelos melhores scores globais
+    sorted_m = sorted(momentos, key=_momento_priority, reverse=True)
     for m in sorted_m:
-        sec = float(m.get("segundo", 0))
-        if any(abs(sec - float(s.get("segundo", 0))) < min_distance_sec for s in selected):
-            continue
-        selected.append(m)
         if len(selected) >= max_clips:
             break
+        if m in selected:
+            continue
+        if _can_pick(float(m.get("segundo", 0))):
+            selected.append(m)
+
     selected.sort(key=lambda x: float(x.get("segundo", 0)))
     return selected
+
+
+def _compute_clip_window(center: float, dur_video: float, clip_duration: float) -> tuple[float, float]:
+    """Calcula (inicio, duracao) proporcionais mantendo contexto antes do clímax."""
+    pre_roll = min(15.0, max(5.0, clip_duration * 0.4))
+    inicio = max(0.0, center - pre_roll)
+    dur_corte = min(dur_video - inicio, clip_duration)
+    return inicio, dur_corte
 
 
 _ACTIVE_LOTE_ANALYSES: set[str] = set()
@@ -949,12 +995,19 @@ class AutoClipWatcher:
 
                             try:
                                 dur_video = float(probe_video(mkv_path)["duration"])
+                                max_clips = max(1, min(15, int(ch_config.get("max_clips_por_bloco", 5))))
+                                clip_dur = max(10.0, min(120.0, float(ch_config.get("duracao_corte_segundos", 30.0))))
+                                min_dist = max(25.0, clip_dur * 0.9)
                                 cortes_feitos = 0
-                                top_momentos = select_top_momentos(momentos, max_clips=5, min_distance_sec=35.0)
+                                top_momentos = select_top_momentos(
+                                    momentos,
+                                    max_clips=max_clips,
+                                    min_distance_sec=min_dist,
+                                    dur_video=dur_video,
+                                )
                                 for idx, m in enumerate(top_momentos, start=1):
                                     center = float(m.get("segundo", 0))
-                                    inicio = max(0.0, center - 12.0)
-                                    dur_corte = min(dur_video - inicio, 30.0)
+                                    inicio, dur_corte = _compute_clip_window(center, dur_video, clip_dur)
                                     if dur_corte <= 2.0:
                                         continue
                                     desc = str(m.get("descricao") or f"momento_{idx}")
@@ -1182,6 +1235,8 @@ def build_state_payload() -> dict[str, Any]:
             "ai_modelo": padroes.get("ai_modelo", "gemma3:4b"),
             "ai_local_url": padroes.get("ai_local_url", "http://localhost:11434"),
             "auto_clip_min_score": int(padroes.get("auto_clip_min_score", DEFAULT_AUTO_CLIP_SCORE)),
+            "max_clips_por_bloco": int(padroes.get("max_clips_por_bloco", 5)),
+            "duracao_corte_segundos": int(padroes.get("duracao_corte_segundos", 30)),
             "deletar_bloco_apos_clip": bool(padroes.get("deletar_bloco_apos_clip", DEFAULT_DELETE_BLOCK_AFTER_CLIP)),
             "diretorio_canais": padroes.get("diretorio_canais", ""),
             "output_dir": padroes.get("output_dir", ""),
@@ -1608,6 +1663,16 @@ class StreamAppHandler(BaseHTTPRequestHandler):
             score = int(body["auto_clip_min_score"])
             target_dict["auto_clip_min_score"] = max(0, min(100, score))
 
+        if body.get("max_clips_por_bloco") is not None:
+            max_c = max(1, min(15, int(body["max_clips_por_bloco"])))
+            padroes["max_clips_por_bloco"] = max_c
+            append_log("APP", f"Máximo de clipes por bloco: {max_c}")
+
+        if body.get("duracao_corte_segundos") is not None:
+            dur_c = max(10, min(120, int(body["duracao_corte_segundos"])))
+            padroes["duracao_corte_segundos"] = dur_c
+            append_log("APP", f"Duração padrão do corte: {dur_c}s")
+
         if body.get("deletar_bloco_apos_clip") is not None:
             target_dict["deletar_bloco_apos_clip"] = bool(body["deletar_bloco_apos_clip"])
             append_log(
@@ -1831,13 +1896,20 @@ class StreamAppHandler(BaseHTTPRequestHandler):
                         cortes_bloco = 0
                         try:
                             dur_video = float(probe_video(mkv_path)["duration"])
-                            top_momentos = select_top_momentos(momentos, max_clips=5, min_distance_sec=35.0)
+                            max_clips = max(1, min(15, int((entry or {}).get("max_clips_por_bloco") or padroes.get("max_clips_por_bloco", 5))))
+                            clip_dur = max(10.0, min(120.0, float((entry or {}).get("duracao_corte_segundos") or padroes.get("duracao_corte_segundos", 30))))
+                            min_dist = max(25.0, clip_dur * 0.9)
+                            top_momentos = select_top_momentos(
+                                momentos,
+                                max_clips=max_clips,
+                                min_distance_sec=min_dist,
+                                dur_video=dur_video,
+                            )
                             for idx, m in enumerate(top_momentos, start=1):
                                 if cancel_ev.is_set():
                                     break
                                 center = float(m.get("segundo", 0))
-                                inicio = max(0.0, center - 12.0)
-                                dur_corte = min(dur_video - inicio, 35.0)
+                                inicio, dur_corte = _compute_clip_window(center, dur_video, clip_dur)
                                 if dur_corte <= 2.0:
                                     continue
                                 desc = str(m.get("descricao") or f"momento_{idx}")

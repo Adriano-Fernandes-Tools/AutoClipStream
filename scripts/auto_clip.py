@@ -181,7 +181,9 @@ def score_transcript_peaks(
             hits = len(IMPACT_KEYWORDS_RE.findall(text))
             words = max(1, len(text.split()))
             density = hits / words * 100
-            window_score = min(100.0, density * 20)
+            # Calibrado para não saturar em 100 com uma única palavra comum,
+            # permitindo que momentos avaliados semanticamente pela IA tenham prioridade.
+            window_score = min(78.0, hits * 18.0 + density * 6.0)
             if window_score >= 30:
                 peaks.append({
                     "segundo": round(t, 2),
