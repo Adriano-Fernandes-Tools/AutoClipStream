@@ -429,6 +429,28 @@ def atualizar_estado_live_incremental(
 # ENGINE PRINCIPAL
 # ==============================================================================
 
+def _extract_transcript_snippet(
+    transcript_segs: list[dict[str, Any]],
+    center_sec: float,
+    before_sec: float = 6.0,
+    after_sec: float = 8.0,
+    max_len: int = 80,
+) -> str:
+    """Extrai trecho falado próximo a um pico de áudio para nomear o clipe com contexto."""
+    if not transcript_segs:
+        return ""
+    texts: list[str] = []
+    for s in transcript_segs:
+        start = float(s.get("start", 0))
+        end = float(s.get("end", start))
+        if end >= (center_sec - before_sec) and start <= (center_sec + after_sec):
+            t = str(s.get("text", "")).strip()
+            if t:
+                texts.append(t)
+    joined = " ".join(texts).strip()
+    return joined[:max_len]
+
+
 def analyze_block(
     canal: str,
     video_path: Path,
@@ -554,11 +576,12 @@ def analyze_block(
         if peak["score"] >= 50:
             seg = int(peak["segundo"])
             m_label = f"{seg // 60}m{seg % 60:02d}s"
+            snippet = _extract_transcript_snippet(transcript_segs, float(peak["segundo"]))
             momentos.append({
                 "segundo": peak["segundo"],
                 "score": peak["score"],
                 "tipo": "audio_peak",
-                "descricao": f"momento_{m_label}",
+                "descricao": snippet if snippet else f"momento_{m_label}",
             })
 
     for peak in text_peaks:
