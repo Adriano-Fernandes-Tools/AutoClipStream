@@ -21,6 +21,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -324,7 +325,7 @@ def score_ai_ollama(
     ollama_url: str = "http://localhost:11434",
     context: str = "",
     jogo: str | None = None,
-    timeout: int = 90,
+    timeout: int = 180,
 ) -> dict[str, Any]:
     """Chama Ollama local via /api/chat e retorna {'score': int, 'momentos': [...], 'success': bool}."""
     target_model = modelo.strip() if modelo and modelo.strip() else "gemma3:4b"
