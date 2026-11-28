@@ -400,8 +400,12 @@ def pre_transcrever_arquivos(
 
         print(f"\n[Pré-transcrição {idx}/{len(pendentes)}] {vp.name}")
         size_bytes = vp.stat().st_size
-        probe = probe_video(vp)
-        duracao = float(probe["duration"])
+        try:
+            probe = probe_video(vp)
+            duracao = float(probe["duration"])
+        except (ValueError, KeyError, TypeError) as probe_err:
+            print(f"  [PULANDO] Não foi possível ler metadados de '{vp.name}': {probe_err}")
+            continue
 
         if len(probe["audios"]) == 0:
             segmentos: list[dict[str, Any]] = []
@@ -627,8 +631,12 @@ def preparar_canal(
 
     for idx, video_path in enumerate(videos_no_lote, start=1):
         print(f"\n[{idx}/{len(videos_no_lote)}] Analisando mídia: {video_path.name}")
-        probe = probe_video(video_path)
-        duracao = float(probe["duration"])
+        try:
+            probe = probe_video(video_path)
+            duracao = float(probe["duration"])
+        except (ValueError, KeyError, TypeError) as probe_err:
+            print(f"  [PULANDO] Metadados inválidos em '{video_path.name}': {probe_err}")
+            continue
         duracao_total += duracao
         fps_label = f"{float(probe['fps']):.2f} fps"
         num_audios = len(probe["audios"])
