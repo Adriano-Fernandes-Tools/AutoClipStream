@@ -436,9 +436,15 @@ def _extract_transcript_snippet(
     after_sec: float = 8.0,
     max_len: int = 80,
 ) -> str:
-    """Extrai trecho falado próximo a um pico de áudio para nomear o clipe com contexto."""
+    """Extrai trecho falado próximo a um pico de áudio para nomear o clipe com contexto.
+
+    Primeiro tenta dentro da janela [center - before_sec, center + after_sec].
+    Se o gap de silêncio for maior que a janela (sem texto encontrado), usa o
+    segmento mais próximo do centro como fallback, independente da distância.
+    """
     if not transcript_segs:
         return ""
+
     texts: list[str] = []
     for s in transcript_segs:
         start = float(s.get("start", 0))
@@ -447,8 +453,20 @@ def _extract_transcript_snippet(
             t = str(s.get("text", "")).strip()
             if t:
                 texts.append(t)
-    joined = " ".join(texts).strip()
-    return joined[:max_len]
+
+    if texts:
+        return " ".join(texts).strip()[:max_len]
+
+    # Fallback: gap de silêncio maior que a janela — pega o segmento com
+    # o midpoint mais próximo do center, sem restrição de distância.
+    best_seg = min(
+        transcript_segs,
+        key=lambda s: abs(
+            (float(s.get("start", 0)) + float(s.get("end", s.get("start", 0)))) / 2.0
+            - center_sec
+        ),
+    )
+    return str(best_seg.get("text", "")).strip()[:max_len]
 
 
 def analyze_block(
